@@ -33,6 +33,8 @@ dist-ssr/
 build/
 backend/dist/
 frontend/dist/
+.vite/
+frontend/.vite/
 
 # 5. Logs & Debugging
 logs/
