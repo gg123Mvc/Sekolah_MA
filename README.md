@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🎓 Sistem Pendaftaran Penerimaan Murid Baru (SPMB) Madrasah Aliyah
 
 Sistem aplikasi web modern untuk proses pendaftaran calon siswa baru di Madrasah Aliyah menggunakan Multi Step Form, validasi lengkap, dan AI Agent chatbot.
@@ -488,3 +489,6 @@ Untuk bantuan dan pertanyaan, hubungi:
 ---
 
 **Dibuat dengan ❤️ untuk Madrasah Aliyah | v1.0.0**
+=======
+# Sekolah_MA
+>>>>>>> fa97dc1d8b0dd551428a2766b6f90c91c46ac39e

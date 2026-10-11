@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ==========================================
 # Git Ignore - SPMB Madrasah Aliyah Project
 # ==========================================
@@ -62,3 +63,10 @@ frontend/scratch/
 .DS_Store
 Thumbs.db
 desktop.ini
+=======
+# Object file
+*.o
+
+# Ada Library Information
+*.ali
+>>>>>>> fa97dc1d8b0dd551428a2766b6f90c91c46ac39e
