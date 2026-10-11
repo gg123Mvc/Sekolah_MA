@@ -7,7 +7,7 @@ yarn.lock
 .env
 .env.local
 .env.*.local
-!.env.example
+.env.example
 
 # Uploads (Dokumen & Foto Pendaftar - Data Pribadi)
 uploads/*
