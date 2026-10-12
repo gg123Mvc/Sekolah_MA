@@ -21,8 +21,12 @@ const LoginPage = () => {
         const { token, ...userData } = response.data.data;
         localStorage.setItem('token', token);
         setAuth(userData, token);
-        toast.success('Selamat datang kembali!');
-        navigate('/form');
+        toast.success(`Selamat datang, ${userData.full_name || 'kembali'}!`);
+        if (userData.role?.includes('admin')) {
+          navigate('/admin');
+        } else {
+          navigate('/form');
+        }
       }
     } catch (error) {
       const msg = error.response?.data?.message || 'Email atau password salah';

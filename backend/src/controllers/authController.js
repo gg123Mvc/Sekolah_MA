@@ -78,7 +78,7 @@ export const register = async (req, res) => {
   }
 };
 
-// Login User
+// Login User (Mendukung Calon Siswa & Admin)
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -88,7 +88,7 @@ export const login = async (req, res) => {
       return errorResponse(res, 'Email dan password harus diisi', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    // Get user
+    // 1. Cek tabel users (Calon Siswa)
     const { data: user, error: fetchError } = await supabase
       .from('users')
       .select('id, email, password, full_name, registration_number')
@@ -97,26 +97,52 @@ export const login = async (req, res) => {
 
     if (fetchError) throw fetchError;
 
-    if (!user) {
-      return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
+    if (user) {
+      const isPasswordValid = await comparePassword(password, user.password);
+      if (!isPasswordValid) {
+        return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
+      }
+
+      const token = generateToken(user.id, user.email, 'user');
+
+      return successResponse(res, {
+        userId: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        registration_number: user.registration_number,
+        token,
+        role: 'user'
+      }, 'Login berhasil');
     }
 
-    // Compare password
-    const isPasswordValid = await comparePassword(password, user.password);
-    if (!isPasswordValid) {
-      return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
+    // 2. Jika bukan siswa, cek tabel admin_users (Super Admin / Admin)
+    const { data: admin, error: adminFetchError } = await supabase
+      .from('admin_users')
+      .select('id, email, password, username, role')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (adminFetchError) throw adminFetchError;
+
+    if (admin) {
+      const isAdminPasswordValid = await comparePassword(password, admin.password);
+      if (!isAdminPasswordValid) {
+        return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
+      }
+
+      const token = generateToken(admin.id, admin.email, admin.role);
+
+      return successResponse(res, {
+        userId: admin.id,
+        email: admin.email,
+        username: admin.username,
+        full_name: admin.username,
+        role: admin.role,
+        token
+      }, 'Login admin berhasil');
     }
 
-    const token = generateToken(user.id, user.email, 'user');
-
-    successResponse(res, {
-      userId: user.id,
-      email: user.email,
-      full_name: user.full_name,
-      registration_number: user.registration_number,
-      token,
-      role: 'user'
-    }, 'Login berhasil');
+    return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Terjadi kesalahan saat login', ERROR_CODES.INTERNAL_ERROR);

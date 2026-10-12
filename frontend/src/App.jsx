@@ -270,72 +270,81 @@ function App() {
         <Route path="/admin/login" element={user && user.role?.includes('admin') ? <Navigate to="/admin" /> : <AdminLogin onLoginSuccess={() => navigate('/admin')} />} />
         <Route path="/admin/*" element={user && user.role?.includes('admin') ? <AdminDashboard onLogout={handleLogout} /> : <Navigate to="/admin/login" />} />
         <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={user ? <Navigate to="/form" /> : <LoginPage />} />
-        <Route path="/register" element={user ? <Navigate to="/form" /> : <div className="min-h-screen bg-islamic-pattern flex items-center justify-center p-6"><div className="max-w-xl w-full"><Step1Registration onNext={handleStep1Next} loading={loading} /></div></div>} />
+        <Route path="/login" element={user ? (user.role?.includes('admin') ? <Navigate to="/admin" /> : <Navigate to="/form" />) : <LoginPage />} />
+        <Route path="/register" element={user ? (user.role?.includes('admin') ? <Navigate to="/admin" /> : <Navigate to="/form" />) : <div className="min-h-screen bg-islamic-pattern flex items-center justify-center p-6"><div className="max-w-xl w-full"><Step1Registration onNext={handleStep1Next} loading={loading} /></div></div>} />
 
-        <Route path="/form" element={!user ? <Navigate to="/login" /> : (
-          <div className="min-h-screen bg-islamic-pattern">
-            {/* Header */}
-            <nav className="glass sticky top-0 z-50 px-6 py-4">
-              <div className="max-w-6xl mx-auto flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <img src="/logo_ma.jpg" alt="Logo" className="w-10 h-10 rounded-full shadow-lg" />
-                  <div className="hidden sm:block">
-                    <h1 className="text-lg font-black text-emerald-900 leading-none">SPMB 2026</h1>
-                    <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-1">Madrasah Aliyah</p>
+        <Route
+          path="/form"
+          element={
+            !user ? (
+              <Navigate to="/login" />
+            ) : user.role?.includes('admin') ? (
+              <Navigate to="/admin" />
+            ) : (
+              <div className="min-h-screen bg-islamic-pattern">
+                {/* Header */}
+                <nav className="glass sticky top-0 z-50 px-6 py-4">
+                  <div className="max-w-6xl mx-auto flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <img src="/logo_ma.jpg" alt="Logo" className="w-10 h-10 rounded-full shadow-lg" />
+                      <div className="hidden sm:block">
+                        <h1 className="text-lg font-black text-emerald-900 leading-none">SPMB 2026</h1>
+                        <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-1">Madrasah Aliyah</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right hidden sm:block">
+                        <p className="text-xs font-black text-emerald-950">{user.full_name}</p>
+                        <p className="text-[10px] text-emerald-600 font-bold">{user.email}</p>
+                      </div>
+                      <button 
+                        onClick={handleLogout}
+                        className="w-10 h-10 bg-red-50 text-red-500 rounded-xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                        title="Keluar"
+                      >
+                        <FiLogOut size={18} />
+                      </button>
+                    </div>
+                  </div>
+                </nav>
+
+                {/* Main Content */}
+                <div className="max-w-4xl mx-auto px-6 py-12">
+                  {currentStep !== 7 && (
+                    <div className="mb-12 glass p-6 rounded-[2rem] shadow-emerald-900/5">
+                      <StepIndicator currentStep={currentStep} />
+                    </div>
+                  )}
+
+                  <div className="animate-fadeIn">
+                    {restoringState ? (
+                      <div className="text-center py-24 glass rounded-[3rem]">
+                        <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-emerald-900 font-bold">Memuat data pendaftaran Anda...</p>
+                        <p className="text-xs text-emerald-600 mt-2">Sebentar ya 😊</p>
+                      </div>
+                    ) : (
+                      <>
+                        {currentStep === 2 && <Step2PersonalData onNext={handleStep2Next} onPrev={() => handlePrev(currentStep)} />}
+                        {currentStep === 3 && <Step3ParentData onNext={handleStep3Next} onPrev={() => handlePrev(currentStep)} />}
+                        {currentStep === 4 && <Step4SchoolData onNext={handleStep4Next} onPrev={() => handlePrev(currentStep)} />}
+                        {currentStep === 5 && <Step5UploadDocuments onNext={handleStep5Next} onPrev={() => handlePrev(currentStep)} />}
+                        {currentStep === 6 && <Step6ReviewConfirmation onNext={handleStep6Next} onPrev={() => handlePrev(currentStep)} loading={loading} />}
+                        {currentStep === 7 && <Step7SuccessPage registrationData={registrationData} />}
+                      </>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right hidden sm:block">
-                    <p className="text-xs font-black text-emerald-950">{user.full_name}</p>
-                    <p className="text-[10px] text-emerald-600 font-bold">{user.email}</p>
-                  </div>
-                  <button 
-                    onClick={handleLogout}
-                    className="w-10 h-10 bg-red-50 text-red-500 rounded-xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"
-                    title="Keluar"
-                  >
-                    <FiLogOut size={18} />
-                  </button>
-                </div>
+
+                <footer className="py-10 text-center">
+                  <p className="text-[10px] text-emerald-900/40 font-bold uppercase tracking-widest">
+                    &copy; 2026 MA Bina Cendekia • Sistem Informasi SPMB
+                  </p>
+                </footer>
               </div>
-            </nav>
-
-            {/* Main Content */}
-            <div className="max-w-4xl mx-auto px-6 py-12">
-              {currentStep !== 7 && (
-                <div className="mb-12 glass p-6 rounded-[2rem] shadow-emerald-900/5">
-                  <StepIndicator currentStep={currentStep} />
-                </div>
-              )}
-
-              <div className="animate-fadeIn">
-                {restoringState ? (
-                  <div className="text-center py-24 glass rounded-[3rem]">
-                    <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                    <p className="text-emerald-900 font-bold">Memuat data pendaftaran Anda...</p>
-                    <p className="text-xs text-emerald-600 mt-2">Sebentar ya 😊</p>
-                  </div>
-                ) : (
-                  <>
-                    {currentStep === 2 && <Step2PersonalData onNext={handleStep2Next} onPrev={() => handlePrev(currentStep)} />}
-                    {currentStep === 3 && <Step3ParentData onNext={handleStep3Next} onPrev={() => handlePrev(currentStep)} />}
-                    {currentStep === 4 && <Step4SchoolData onNext={handleStep4Next} onPrev={() => handlePrev(currentStep)} />}
-                    {currentStep === 5 && <Step5UploadDocuments onNext={handleStep5Next} onPrev={() => handlePrev(currentStep)} />}
-                    {currentStep === 6 && <Step6ReviewConfirmation onNext={handleStep6Next} onPrev={() => handlePrev(currentStep)} loading={loading} />}
-                    {currentStep === 7 && <Step7SuccessPage registrationData={registrationData} />}
-                  </>
-                )}
-              </div>
-            </div>
-
-            <footer className="py-10 text-center">
-              <p className="text-[10px] text-emerald-900/40 font-bold uppercase tracking-widest">
-                &copy; 2026 MA Bina Cendekia • Sistem Informasi SPMB
-              </p>
-            </footer>
-          </div>
-        )} />
+            )
+          }
+        />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
       
