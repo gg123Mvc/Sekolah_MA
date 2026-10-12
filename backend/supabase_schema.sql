@@ -209,6 +209,15 @@ ALTER TABLE knowledge_base ENABLE ROW LEVEL SECURITY;
 ALTER TABLE complaints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE complaint_logs ENABLE ROW LEVEL SECURITY;
 
--- Policy: service_role (backend) bisa akses semua
--- Supabase otomatis bypass RLS untuk service_role key
--- Policy untuk anon/authenticated jika diperlukan bisa ditambah nanti
+-- ================================================================
+-- PERMISSIONS & GRANTS
+-- Memberikan hak akses penuh ke schema public untuk service_role & backend
+-- ================================================================
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
