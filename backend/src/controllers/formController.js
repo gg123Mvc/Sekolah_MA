@@ -1,4 +1,4 @@
-import pool from '../config/database.js';
+import supabase from '../config/database.js';
 import { isValidNISN, isValidNIK } from '../utils/validators.js';
 import { successResponse, errorResponse, ERROR_CODES } from '../utils/errors.js';
 
@@ -21,26 +21,29 @@ export const savePersonalData = async (req, res) => {
       return errorResponse(res, 'NIK harus 16 digit', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
-
     // Check if record exists
-    const [existing] = await connection.execute('SELECT id FROM personal_data WHERE user_id = ?', [userId]);
+    const { data: existing, error: checkError } = await supabase
+      .from('personal_data')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    if (existing.length > 0) {
-      // Update
-      await connection.execute(
-        'UPDATE personal_data SET nisn = ?, nik = ?, full_name = ?, gender = ?, birth_place = ?, birth_date = ?, religion = ?, child_number = ?, siblings_count = ?, full_address = ?, auto_saved = ?, auto_save_time = NOW() WHERE user_id = ?',
-        [nisn, nik, full_name, gender, birth_place, birth_date, religion, child_number, siblings_count, full_address, true, userId]
-      );
+    if (checkError) throw checkError;
+
+    const payload = {
+      nisn, nik, full_name, gender, birth_place, birth_date,
+      religion, child_number, siblings_count, full_address,
+      auto_saved: true,
+      auto_save_time: new Date().toISOString()
+    };
+
+    if (existing) {
+      const { error } = await supabase.from('personal_data').update(payload).eq('user_id', userId);
+      if (error) throw error;
     } else {
-      // Insert
-      await connection.execute(
-        'INSERT INTO personal_data (user_id, nisn, nik, full_name, gender, birth_place, birth_date, religion, child_number, siblings_count, full_address, auto_saved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [userId, nisn, nik, full_name, gender, birth_place, birth_date, religion, child_number, siblings_count, full_address, true]
-      );
+      const { error } = await supabase.from('personal_data').insert({ user_id: userId, ...payload });
+      if (error) throw error;
     }
-
-    connection.release();
 
     successResponse(res, { auto_saved: true, timestamp: new Date() }, 'Data pribadi tersimpan');
   } catch (error) {
@@ -53,20 +56,20 @@ export const savePersonalData = async (req, res) => {
 export const getPersonalData = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const connection = await pool.getConnection();
 
-    const [data] = await connection.execute(
-      'SELECT * FROM personal_data WHERE user_id = ?',
-      [userId]
-    );
+    const { data, error } = await supabase
+      .from('personal_data')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    connection.release();
+    if (error) throw error;
 
-    if (data.length === 0) {
+    if (!data) {
       return successResponse(res, {}, 'Data tidak ditemukan');
     }
 
-    successResponse(res, data[0], 'Data pribadi berhasil diambil');
+    successResponse(res, data, 'Data pribadi berhasil diambil');
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Terjadi kesalahan', ERROR_CODES.INTERNAL_ERROR);
@@ -79,26 +82,27 @@ export const saveParentData = async (req, res) => {
     const { father_name, father_occupation, father_education, mother_name, mother_occupation, mother_education, guardian_name, guardian_phone, family_income, parent_address } = req.body;
     const userId = req.user.userId;
 
-    const connection = await pool.getConnection();
+    const { data: existing, error: checkError } = await supabase
+      .from('parent_data')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    // Check if record exists
-    const [existing] = await connection.execute('SELECT id FROM parent_data WHERE user_id = ?', [userId]);
+    if (checkError) throw checkError;
 
-    if (existing.length > 0) {
-      // Update
-      await connection.execute(
-        'UPDATE parent_data SET father_name = ?, father_occupation = ?, father_education = ?, mother_name = ?, mother_occupation = ?, mother_education = ?, guardian_name = ?, guardian_phone = ?, family_income = ?, parent_address = ? WHERE user_id = ?',
-        [father_name, father_occupation, father_education, mother_name, mother_occupation, mother_education, guardian_name, guardian_phone, family_income, parent_address, userId]
-      );
+    const payload = {
+      father_name, father_occupation, father_education,
+      mother_name, mother_occupation, mother_education,
+      guardian_name, guardian_phone, family_income, parent_address
+    };
+
+    if (existing) {
+      const { error } = await supabase.from('parent_data').update(payload).eq('user_id', userId);
+      if (error) throw error;
     } else {
-      // Insert
-      await connection.execute(
-        'INSERT INTO parent_data (user_id, father_name, father_occupation, father_education, mother_name, mother_occupation, mother_education, guardian_name, guardian_phone, family_income, parent_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [userId, father_name, father_occupation, father_education, mother_name, mother_occupation, mother_education, guardian_name, guardian_phone, family_income, parent_address]
-      );
+      const { error } = await supabase.from('parent_data').insert({ user_id: userId, ...payload });
+      if (error) throw error;
     }
-
-    connection.release();
 
     successResponse(res, {}, 'Data orang tua tersimpan');
   } catch (error) {
@@ -111,20 +115,20 @@ export const saveParentData = async (req, res) => {
 export const getParentData = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const connection = await pool.getConnection();
 
-    const [data] = await connection.execute(
-      'SELECT * FROM parent_data WHERE user_id = ?',
-      [userId]
-    );
+    const { data, error } = await supabase
+      .from('parent_data')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    connection.release();
+    if (error) throw error;
 
-    if (data.length === 0) {
+    if (!data) {
       return successResponse(res, {}, 'Data tidak ditemukan');
     }
 
-    successResponse(res, data[0], 'Data orang tua berhasil diambil');
+    successResponse(res, data, 'Data orang tua berhasil diambil');
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Terjadi kesalahan', ERROR_CODES.INTERNAL_ERROR);
@@ -142,26 +146,26 @@ export const saveSchoolData = async (req, res) => {
       return errorResponse(res, 'Data required harus diisi', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
+    const { data: existing, error: checkError } = await supabase
+      .from('school_data')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    // Check if record exists
-    const [existing] = await connection.execute('SELECT id FROM school_data WHERE user_id = ?', [userId]);
+    if (checkError) throw checkError;
 
-    if (existing.length > 0) {
-      // Update
-      await connection.execute(
-        'UPDATE school_data SET school_name = ?, npsn = ?, school_address = ?, graduation_year = ?, diploma_number = ?, average_score = ?, major_choice = ? WHERE user_id = ?',
-        [school_name, npsn, school_address, graduation_year, diploma_number, average_score, major_choice, userId]
-      );
+    const payload = {
+      school_name, npsn, school_address, graduation_year,
+      diploma_number, average_score, major_choice
+    };
+
+    if (existing) {
+      const { error } = await supabase.from('school_data').update(payload).eq('user_id', userId);
+      if (error) throw error;
     } else {
-      // Insert
-      await connection.execute(
-        'INSERT INTO school_data (user_id, school_name, npsn, school_address, graduation_year, diploma_number, average_score, major_choice) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [userId, school_name, npsn, school_address, graduation_year, diploma_number, average_score, major_choice]
-      );
+      const { error } = await supabase.from('school_data').insert({ user_id: userId, ...payload });
+      if (error) throw error;
     }
-
-    connection.release();
 
     successResponse(res, {}, 'Data sekolah tersimpan');
   } catch (error) {
@@ -174,20 +178,20 @@ export const saveSchoolData = async (req, res) => {
 export const getSchoolData = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const connection = await pool.getConnection();
 
-    const [data] = await connection.execute(
-      'SELECT * FROM school_data WHERE user_id = ?',
-      [userId]
-    );
+    const { data, error } = await supabase
+      .from('school_data')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    connection.release();
+    if (error) throw error;
 
-    if (data.length === 0) {
+    if (!data) {
       return successResponse(res, {}, 'Data tidak ditemukan');
     }
 
-    successResponse(res, data[0], 'Data sekolah berhasil diambil');
+    successResponse(res, data, 'Data sekolah berhasil diambil');
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Terjadi kesalahan', ERROR_CODES.INTERNAL_ERROR);
@@ -198,46 +202,23 @@ export const getSchoolData = async (req, res) => {
 export const getAllRegistrationData = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const connection = await pool.getConnection();
 
-    // Get user data
-    const [userData] = await connection.execute(
-      'SELECT full_name, email, whatsapp, registration_status, registration_date FROM users WHERE id = ?',
-      [userId]
-    );
+    const [userRes, personalRes, parentRes, schoolRes, documentsRes] = await Promise.all([
+      supabase.from('users').select('full_name, email, whatsapp, registration_status, registration_date').eq('id', userId).maybeSingle(),
+      supabase.from('personal_data').select('*').eq('user_id', userId).maybeSingle(),
+      supabase.from('parent_data').select('*').eq('user_id', userId).maybeSingle(),
+      supabase.from('school_data').select('*').eq('user_id', userId).maybeSingle(),
+      supabase.from('documents').select('*').eq('user_id', userId)
+    ]);
 
-    // Get personal data
-    const [personalData] = await connection.execute(
-      'SELECT * FROM personal_data WHERE user_id = ?',
-      [userId]
-    );
-
-    // Get parent data
-    const [parentData] = await connection.execute(
-      'SELECT * FROM parent_data WHERE user_id = ?',
-      [userId]
-    );
-
-    // Get school data
-    const [schoolData] = await connection.execute(
-      'SELECT * FROM school_data WHERE user_id = ?',
-      [userId]
-    );
-
-    // Get documents
-    const [documents] = await connection.execute(
-      'SELECT * FROM documents WHERE user_id = ?',
-      [userId]
-    );
-
-    connection.release();
+    if (userRes.error) throw userRes.error;
 
     successResponse(res, {
-      user: userData[0] || {},
-      personal_data: personalData[0] || {},
-      parent_data: parentData[0] || {},
-      school_data: schoolData[0] || {},
-      documents: documents || []
+      user: userRes.data || {},
+      personal_data: personalRes.data || {},
+      parent_data: parentRes.data || {},
+      school_data: schoolRes.data || {},
+      documents: documentsRes.data || []
     }, 'Data pendaftaran berhasil diambil');
   } catch (error) {
     console.error(error);

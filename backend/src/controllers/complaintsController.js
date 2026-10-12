@@ -1,4 +1,4 @@
-import pool from '../config/database.js';
+import supabase from '../config/database.js';
 import { successResponse, errorResponse, ERROR_CODES } from '../utils/errors.js';
 
 // Get All Complaints with Filters and Stats
@@ -6,62 +6,46 @@ export const getComplaints = async (req, res) => {
   try {
     const { status, category, date, search } = req.query;
 
-    const connection = await pool.getConnection();
+    // 1. Get stats
+    const { data: allComplaints, error: statsError } = await supabase
+      .from('complaints')
+      .select('status, created_at');
 
-    // 1. Base query for stats
-    const [allStats] = await connection.execute(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) as today,
-        SUM(CASE WHEN status = 'Menunggu' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'Diproses' THEN 1 ELSE 0 END) as processing,
-        SUM(CASE WHEN status = 'Selesai' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'Ditolak' THEN 1 ELSE 0 END) as rejected
-      FROM complaints
-    `);
+    if (statsError) throw statsError;
 
-    // 2. Query for table list
-    let query = `
-      SELECT c.*, u.full_name, u.email 
-      FROM complaints c
-      LEFT JOIN users u ON c.user_id = u.id
-      WHERE 1=1
-    `;
-    const params = [];
+    const today = new Date().toISOString().slice(0, 10);
+    const stats = {
+      total: allComplaints.length,
+      today: allComplaints.filter(c => c.created_at?.slice(0, 10) === today).length,
+      pending: allComplaints.filter(c => c.status === 'Menunggu').length,
+      processing: allComplaints.filter(c => c.status === 'Diproses').length,
+      completed: allComplaints.filter(c => c.status === 'Selesai').length,
+      rejected: allComplaints.filter(c => c.status === 'Ditolak').length,
+    };
 
-    if (status) {
-      query += ` AND c.status = ?`;
-      params.push(status);
-    }
-    if (category) {
-      query += ` AND c.category = ?`;
-      params.push(category);
-    }
-    if (date) {
-      query += ` AND DATE(c.created_at) = ?`;
-      params.push(date);
-    }
-    if (search) {
-      query += ` AND (c.ticket_number LIKE ? OR u.full_name LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
-    }
+    // 2. Query for table list with join
+    let query = supabase
+      .from('complaints')
+      .select('*, users ( full_name, email )')
+      .order('created_at', { ascending: false });
 
-    query += ` ORDER BY c.created_at DESC`;
+    if (status) query = query.eq('status', status);
+    if (category) query = query.eq('category', category);
+    if (date) query = query.gte('created_at', `${date}T00:00:00`).lte('created_at', `${date}T23:59:59`);
+    if (search) query = query.or(`ticket_number.ilike.%${search}%`);
 
-    const [complaints] = await connection.execute(query, params);
-    connection.release();
+    const { data: complaints, error: listError } = await query;
+    if (listError) throw listError;
 
-    successResponse(res, {
-      stats: {
-        total: allStats[0].total || 0,
-        today: allStats[0].today || 0,
-        pending: allStats[0].pending || 0,
-        processing: allStats[0].processing || 0,
-        completed: allStats[0].completed || 0,
-        rejected: allStats[0].rejected || 0
-      },
-      complaints
-    }, 'Berhasil mengambil data pengaduan');
+    // Flatten user join
+    const flatComplaints = (complaints || []).map(c => ({
+      ...c,
+      full_name: c.users?.full_name || null,
+      email: c.users?.email || null,
+      users: undefined
+    }));
+
+    successResponse(res, { stats, complaints: flatComplaints }, 'Berhasil mengambil data pengaduan');
   } catch (error) {
     console.error('Error fetching complaints:', error);
     errorResponse(res, 'Gagal mengambil data pengaduan', ERROR_CODES.INTERNAL_ERROR);
@@ -72,32 +56,35 @@ export const getComplaints = async (req, res) => {
 export const getComplaintDetail = async (req, res) => {
   try {
     const { id } = req.params;
-    const connection = await pool.getConnection();
 
-    const [rows] = await connection.execute(`
-      SELECT c.*, u.full_name, u.email 
-      FROM complaints c
-      LEFT JOIN users u ON c.user_id = u.id
-      WHERE c.id = ?
-    `, [id]);
+    const { data: complaint, error: compError } = await supabase
+      .from('complaints')
+      .select('*, users ( full_name, email )')
+      .eq('id', id)
+      .maybeSingle();
 
-    if (rows.length === 0) {
-      connection.release();
+    if (compError) throw compError;
+
+    if (!complaint) {
       return errorResponse(res, 'Pengaduan tidak ditemukan', ERROR_CODES.NOT_FOUND);
     }
 
-    const complaint = rows[0];
+    // Get logs (jika tabel complaint_logs ada)
+    const { data: logs } = await supabase
+      .from('complaint_logs')
+      .select('*')
+      .eq('complaint_id', id)
+      .order('handled_at', { ascending: false });
 
-    const [logs] = await connection.execute(`
-      SELECT * FROM complaint_logs WHERE complaint_id = ? ORDER BY handled_at DESC
-    `, [id]);
-
-    connection.release();
-
-    successResponse(res, {
+    const result = {
       ...complaint,
-      logs
-    }, 'Berhasil mengambil detail pengaduan');
+      full_name: complaint.users?.full_name || null,
+      email: complaint.users?.email || null,
+      users: undefined,
+      logs: logs || []
+    };
+
+    successResponse(res, result, 'Berhasil mengambil detail pengaduan');
   } catch (error) {
     console.error('Error fetching complaint detail:', error);
     errorResponse(res, 'Gagal mengambil detail pengaduan', ERROR_CODES.INTERNAL_ERROR);
@@ -109,28 +96,31 @@ export const updateComplaintStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, admin_note } = req.body;
-    const adminName = req.user?.full_name || 'Admin';
+    const adminName = req.user?.full_name || req.user?.username || 'Admin';
 
     if (!status) {
       return errorResponse(res, 'Status harus diisi', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
-    
-    // Update main table
-    await connection.execute(`
-      UPDATE complaints 
-      SET status = ?, admin_note = ?, handled_by = ?, handled_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [status, admin_note || null, adminName, id]);
+    const { error: updateError } = await supabase
+      .from('complaints')
+      .update({
+        status,
+        admin_note: admin_note || null,
+        handled_by: adminName,
+        handled_at: new Date().toISOString()
+      })
+      .eq('id', id);
 
-    // Insert log
-    await connection.execute(`
-      INSERT INTO complaint_logs (complaint_id, status, admin_note, handled_by)
-      VALUES (?, ?, ?, ?)
-    `, [id, status, admin_note || null, adminName]);
+    if (updateError) throw updateError;
 
-    connection.release();
+    // Insert log (best effort, jika tabel ada)
+    await supabase.from('complaint_logs').insert({
+      complaint_id: parseInt(id),
+      status,
+      admin_note: admin_note || null,
+      handled_by: adminName
+    }).then(() => {}).catch(() => {});
 
     successResponse(res, null, 'Status pengaduan berhasil diperbarui');
   } catch (error) {
@@ -143,12 +133,10 @@ export const updateComplaintStatus = async (req, res) => {
 export const deleteComplaint = async (req, res) => {
   try {
     const { id } = req.params;
-    const connection = await pool.getConnection();
 
-    await connection.execute('DELETE FROM complaints WHERE id = ?', [id]);
-    // complaint_logs will cascade delete
+    const { error } = await supabase.from('complaints').delete().eq('id', id);
+    if (error) throw error;
 
-    connection.release();
     successResponse(res, null, 'Pengaduan berhasil dihapus');
   } catch (error) {
     console.error('Error deleting complaint:', error);

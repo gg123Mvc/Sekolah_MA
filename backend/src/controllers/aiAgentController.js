@@ -1,4 +1,4 @@
-import pool from '../config/database.js';
+import supabase from '../config/database.js';
 import { successResponse, errorResponse, ERROR_CODES } from '../utils/errors.js';
 import axios from 'axios';
 import { getFormattedKnowledgeBase } from './knowledgeBaseController.js';
@@ -17,12 +17,10 @@ export const sendMessageToAI = async (req, res) => {
     let aiResponse = "";
     
     // Interceptor: Deteksi otomatis nomor registrasi atau tiket untuk mempercepat respon 
-    // dan menghindari kendala koneksi/timeout dari server AI pihak ketiga
     const msgUpper = message.trim().toUpperCase();
     const ticketMatch = msgUpper.match(/(CMP-\d{8}-\d{5})/);
     const gradMatch = msgUpper.match(/(SPMB-\d{4}-\d{3,4}|REG\d+)/);
     
-    // Kata kunci tanpa nomor
     const askGrad = msgUpper.match(/(CEK KELULUSAN|HASIL SELEKSI|STATUS KELULUSAN|PENGUMUMAN|LULUS ATAU TIDAK)/);
     const askTicket = msgUpper.match(/(CEK TIKET|STATUS PENGADUAN|CEK PENGADUAN|LACAK PENGADUAN)/);
 
@@ -46,33 +44,36 @@ export const sendMessageToAI = async (req, res) => {
         if (actionData.action === 'create_complaint') {
           try {
             const dateStr = new Date().toISOString().slice(0,10).replace(/-/g, '');
-            const connection = await pool.getConnection();
-            const [rows] = await connection.execute(
-              "SELECT ticket_number FROM complaints WHERE ticket_number LIKE ? ORDER BY id DESC LIMIT 1",
-              [`CMP-${dateStr}-%`]
-            );
-            
+
+            // Get last ticket number for today
+            const { data: lastTicket } = await supabase
+              .from('complaints')
+              .select('ticket_number')
+              .like('ticket_number', `CMP-${dateStr}-%`)
+              .order('id', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
             let nextNum = 1;
-            if (rows.length > 0) {
-              const lastNum = parseInt(rows[0].ticket_number.split('-')[2]);
+            if (lastTicket) {
+              const lastNum = parseInt(lastTicket.ticket_number.split('-')[2]);
               nextNum = lastNum + 1;
             }
             const ticketNumber = `CMP-${dateStr}-${String(nextNum).padStart(5, '0')}`;
             
             const userId = (user && user.userId) ? user.userId : null;
             
-            await connection.execute(
-              "INSERT INTO complaints (ticket_number, user_id, category, priority, complaint, summary, status) VALUES (?, ?, ?, ?, ?, ?, 'Menunggu')",
-              [
-                ticketNumber,
-                userId,
-                actionData.category || 'Lainnya',
-                actionData.priority || 'Low',
-                actionData.complaint || message,
-                actionData.summary || 'Pengaduan pengguna'
-              ]
-            );
-            connection.release();
+            const { error: insertError } = await supabase.from('complaints').insert({
+              ticket_number: ticketNumber,
+              user_id: userId,
+              category: actionData.category || 'Lainnya',
+              priority: actionData.priority || 'Low',
+              complaint: actionData.complaint || message,
+              summary: actionData.summary || 'Pengaduan pengguna',
+              status: 'Menunggu'
+            });
+
+            if (insertError) throw insertError;
             
             aiResponse = `====================================================\n\nTerima kasih.\n\nPengaduan Anda telah berhasil dicatat.\n\nNomor Tiket:\n${ticketNumber}\n\nKategori:\n${actionData.category || 'Lainnya'}\n\nStatus:\nMenunggu\n\nSilakan simpan nomor tiket tersebut untuk melakukan pengecekan status melalui MAIRA AI.\n\n====================================================`;
           } catch (dbErr) {
@@ -81,15 +82,15 @@ export const sendMessageToAI = async (req, res) => {
           }
         } else if (actionData.action === 'check_ticket') {
           try {
-            const connection = await pool.getConnection();
-            const [rows] = await connection.execute(
-              "SELECT * FROM complaints WHERE ticket_number = ?",
-              [actionData.ticket_number]
-            );
-            connection.release();
+            const { data: ticket, error } = await supabase
+              .from('complaints')
+              .select('*')
+              .eq('ticket_number', actionData.ticket_number)
+              .maybeSingle();
+
+            if (error) throw error;
             
-            if (rows.length > 0) {
-              const ticket = rows[0];
+            if (ticket) {
               const dateObj = new Date(ticket.updated_at);
               const pad = (n) => String(n).padStart(2, '0');
               const updatedAt = `${dateObj.getFullYear()}-${pad(dateObj.getMonth()+1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
@@ -104,28 +105,25 @@ export const sendMessageToAI = async (req, res) => {
           }
         } else if (actionData.action === 'check_graduation') {
           try {
-            const connection = await pool.getConnection();
-            const [rows] = await connection.execute(
-              `SELECT u.registration_number, u.full_name, u.registration_status, s.major_choice 
-               FROM users u 
-               LEFT JOIN school_data s ON u.id = s.user_id 
-               WHERE u.registration_number = ?`,
-              [actionData.registration_number]
-            );
-            connection.release();
+            const { data: rows, error } = await supabase
+              .from('users')
+              .select('registration_number, full_name, registration_status, school_data ( major_choice )')
+              .eq('registration_number', actionData.registration_number)
+              .maybeSingle();
+
+            if (error) throw error;
             
-            if (rows.length > 0) {
-              const user = rows[0];
+            if (rows) {
               let statusText = '';
               let messageText = '';
               
-              if (user.registration_status === 'accepted') {
+              if (rows.registration_status === 'accepted') {
                 statusText = '✅ LULUS';
                 messageText = 'Selamat. Silakan melakukan daftar ulang sesuai jadwal yang telah ditentukan.';
-              } else if (user.registration_status === 'rejected') {
+              } else if (rows.registration_status === 'rejected') {
                 statusText = '❌ TIDAK LULUS';
                 messageText = 'Terima kasih telah mengikuti proses seleksi. Semoga sukses pada kesempatan berikutnya.';
-              } else if (user.registration_status === 'revision') {
+              } else if (rows.registration_status === 'revision') {
                 statusText = '⚠️ PERLU REVISI';
                 messageText = 'Dokumen Anda perlu diperbaiki. Silakan login ke dashboard untuk melihat detail revisi.';
               } else {
@@ -133,7 +131,7 @@ export const sendMessageToAI = async (req, res) => {
                 messageText = 'Pendaftaran Anda sedang dalam antrean pengecekan oleh panitia. Mohon cek kembali secara berkala.';
               }
               
-              aiResponse = `🎓 HASIL SELEKSI PMB\n\nNomor Registrasi\n${user.registration_number}\n\nNama\n${user.full_name}\n\nProgram\n${user.major_choice || '-'}\n\nStatus\n${statusText}\n\n${messageText}`;
+              aiResponse = `🎓 HASIL SELEKSI PMB\n\nNomor Registrasi\n${rows.registration_number}\n\nNama\n${rows.full_name}\n\nProgram\n${rows.school_data?.major_choice || '-'}\n\nStatus\n${statusText}\n\n${messageText}`;
             } else {
               aiResponse = `Mohon maaf.\n\nNomor Registrasi tidak ditemukan.\n\nSilakan periksa kembali Nomor Registrasi Anda.`;
             }
@@ -142,8 +140,6 @@ export const sendMessageToAI = async (req, res) => {
             aiResponse = `Mohon maaf. Saat ini pengecekan kelulusan belum dapat diproses karena terjadi gangguan sistem. Silakan mencoba beberapa saat lagi.`;
           }
         } else if (actionData.action === 'check_route') {
-          // Fitur cek jarak hanya tersedia melalui GPS perangkat.
-          // AI diarahkan untuk tidak memproses lokasi manual — pesan ini adalah fallback jika AI salah merespons.
           aiResponse = "📍 **Cek Jarak ke Sekolah**\n\nUntuk menghitung jarak dari lokasi Anda ke sekolah, silakan gunakan fitur **Cek Jarak** yang tersedia di halaman ini.\n\nFitur tersebut akan meminta izin akses lokasi GPS perangkat Anda untuk menentukan titik awal secara akurat.\n\nJarak dan estimasi waktu perjalanan akan dihitung secara otomatis setelah izin diberikan.";
         }
       } catch(e) {
@@ -156,12 +152,14 @@ export const sendMessageToAI = async (req, res) => {
 
     // Save to DB only if user is logged in
     if (user && user.userId) {
-      const connection = await pool.getConnection();
-      await connection.execute(
-        'INSERT INTO chat_history (user_id, message, response, message_type, response_time_ms) VALUES (?, ?, ?, ?, ?)',
-        [user.userId, message, aiResponse, 'ai_agent', responseTimeMs]
-      );
-      connection.release();
+      const { error: historyError } = await supabase.from('chat_history').insert({
+        user_id: user.userId,
+        message,
+        response: aiResponse,
+        message_type: 'ai_agent',
+        response_time_ms: responseTimeMs
+      });
+      if (historyError) console.error('Failed to save chat history:', historyError.message);
     }
 
     successResponse(res, {
@@ -195,7 +193,6 @@ const callNeoXRAI = async (message, history = []) => {
     }).join("\n");
   }
 
-  // Ambil knowledge base dari database
   const knowledgeBaseText = await getFormattedKnowledgeBase();
 
   const systemPrompt = `Nama Anda adalah MAIRA AI (Madrasah AI Response Assistant), asisten virtual resmi MA Bina Cendekia.
@@ -295,7 +292,6 @@ Tanya: ${message}`;
       timeout: 30000 
     });
 
-    // NeoXR response parsing
     let text = '';
     if (response.data && response.data.status) {
       if (typeof response.data.data === 'object' && response.data.data.message) {
@@ -326,13 +322,16 @@ export const getChatHistory = async (req, res) => {
       return successResponse(res, [], 'Guest history empty');
     }
 
-    const connection = await pool.getConnection();
-    const [chatHistory] = await connection.execute(
-      'SELECT user_id, message, response, message_type, created_at, response_time_ms FROM chat_history WHERE user_id = ? ORDER BY created_at ASC LIMIT 50',
-      [user.userId]
-    );
-    connection.release();
-    successResponse(res, chatHistory, 'Chat history berhasil diambil');
+    const { data, error } = await supabase
+      .from('chat_history')
+      .select('user_id, message, response, message_type, created_at, response_time_ms')
+      .eq('user_id', user.userId)
+      .order('created_at', { ascending: true })
+      .limit(50);
+
+    if (error) throw error;
+
+    successResponse(res, data || [], 'Chat history berhasil diambil');
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Terjadi kesalahan', ERROR_CODES.INTERNAL_ERROR);
@@ -347,9 +346,13 @@ export const clearChatHistory = async (req, res) => {
       return successResponse(res, {}, 'Guest chat history cleared');
     }
 
-    const connection = await pool.getConnection();
-    await connection.execute('DELETE FROM chat_history WHERE user_id = ?', [user.userId]);
-    connection.release();
+    const { error } = await supabase
+      .from('chat_history')
+      .delete()
+      .eq('user_id', user.userId);
+
+    if (error) throw error;
+
     successResponse(res, {}, 'Chat history berhasil dihapus');
   } catch (error) {
     console.error(error);
@@ -362,14 +365,15 @@ export const calculateDistanceFromGPS = async (req, res) => {
   try {
     const { userLat, userLon, accuracy } = req.body;
 
-    // Validasi koordinat
-    if (userLat === undefined || userLon === undefined) {
+    // Validasi keberadaan koordinat
+    if (userLat === undefined || userLat === null || userLon === undefined || userLon === null) {
       return errorResponse(res, 'Koordinat lokasi pengguna tidak tersedia', ERROR_CODES.VALIDATION_ERROR);
     }
 
     const lat = parseFloat(userLat);
     const lon = parseFloat(userLon);
 
+    // Validasi range koordinat geografis
     if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
       return errorResponse(res, 'Koordinat GPS tidak valid', ERROR_CODES.VALIDATION_ERROR);
     }
@@ -378,44 +382,92 @@ export const calculateDistanceFromGPS = async (req, res) => {
     const schoolLat = parseFloat(process.env.SCHOOL_LAT) || -6.8133266;
     const schoolLon = parseFloat(process.env.SCHOOL_LON) || 108.6177609;
     const schoolName = process.env.SCHOOL_NAME || 'MA Bina Cendekia';
+    const schoolAddress = process.env.SCHOOL_ADDRESS || 'Jl. Raya Madrasah No. 123, Jawa Barat';
 
-    // Hitung jarak garis lurus (Haversine) sebagai referensi
-    const R = 6371; // Radius bumi dalam km
+    // Hitung jarak garis lurus (Haversine) sebagai referensi tambahan
+    const R = 6371; // radius bumi dalam km
     const dLat = (schoolLat - lat) * Math.PI / 180;
     const dLon = (schoolLon - lon) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos(lat * Math.PI / 180) * Math.cos(schoolLat * Math.PI / 180) *
       Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const straightLineKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const straightLineKm = parseFloat((R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(2));
 
-    // Hitung jarak rute via OSRM
+    // Hitung rute perjalanan tercepat via OSRM (Profil Driving/Mobil)
+    // Gunakan daftar endpoint dengan fallback untuk keandalan maksimal
+    const osrmEndpoints = [
+      `https://router.project-osrm.org/route/v1/driving/${lon},${lat};${schoolLon},${schoolLat}?overview=full&geometries=geojson&alternatives=true`,
+      `https://routing.openstreetmap.de/routed-car/route/v1/driving/${lon},${lat};${schoolLon},${schoolLat}?overview=full&geometries=geojson&alternatives=true`
+    ];
+
     let routeData = null;
-    try {
-      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${lon},${lat};${schoolLon},${schoolLat}?overview=false`;
-      const routeRes = await axios.get(osrmUrl, { timeout: 10000 });
 
-      if (routeRes.data && routeRes.data.code === 'Ok' && routeRes.data.routes.length > 0) {
-        const route = routeRes.data.routes[0];
-        routeData = {
-          distanceKm: parseFloat((route.distance / 1000).toFixed(1)),
-          durationMinutes: Math.round(route.duration / 60),
-          mapsUrl: `https://www.google.com/maps/dir/?api=1&origin=${lat},${lon}&destination=${schoolLat},${schoolLon}`
-        };
+    for (const endpoint of osrmEndpoints) {
+      try {
+        const routeRes = await axios.get(endpoint, {
+          headers: {
+            'User-Agent': 'SPMB-MABinaCendekia/1.0 (contact: info@mabinacendekia.sch.id)'
+          },
+          timeout: 8000
+        });
+
+        if (routeRes.data && routeRes.data.code === 'Ok' && Array.isArray(routeRes.data.routes) && routeRes.data.routes.length > 0) {
+          // Urutkan rute berdasarkan durasi tercepat
+          const sortedRoutes = [...routeRes.data.routes].sort((r1, r2) => r1.duration - r2.duration);
+          const fastestRoute = sortedRoutes[0];
+
+          // Format durasi ke format menit atau jam yang informatif
+          const totalMinutes = Math.round(fastestRoute.duration / 60);
+          let durationFormatted = `${totalMinutes} menit`;
+          if (totalMinutes >= 60) {
+            const hours = Math.floor(totalMinutes / 60);
+            const remainingMins = totalMinutes % 60;
+            durationFormatted = remainingMins > 0 ? `${hours} jam ${remainingMins} menit` : `${hours} jam`;
+          }
+
+          // Cek rute alternatif jika tersedia
+          const alternatives = sortedRoutes.slice(1).map((alt) => ({
+            distanceKm: parseFloat((alt.distance / 1000).toFixed(1)),
+            durationMinutes: Math.round(alt.duration / 60),
+            durationFormatted: Math.round(alt.duration / 60) >= 60
+              ? `${Math.floor(Math.round(alt.duration / 60) / 60)} jam ${Math.round(alt.duration / 60) % 60} mnt`
+              : `${Math.round(alt.duration / 60)} menit`
+          }));
+
+          routeData = {
+            type: 'Rute Tercepat',
+            profile: 'driving',
+            distanceKm: parseFloat((fastestRoute.distance / 1000).toFixed(1)),
+            distanceMeters: Math.round(fastestRoute.distance),
+            durationMinutes: totalMinutes,
+            durationFormatted,
+            geometry: fastestRoute.geometry || null,
+            mapsUrl: `https://www.google.com/maps/dir/?api=1&origin=${lat},${lon}&destination=${schoolLat},${schoolLon}`,
+            alternatives
+          };
+
+          // Berhasil mengambil rute dari endpoint, hentikan iterasi endpoint fallback
+          break;
+        }
+      } catch (err) {
+        console.warn(`Routing endpoint failed (${endpoint.split('//')[1].split('/')[0]}):`, err.message);
       }
-    } catch (osrmErr) {
-      console.error('OSRM routing error:', osrmErr.message);
-      // Routing gagal, kembalikan data garis lurus saja
     }
 
     successResponse(res, {
-      straightLineKm: parseFloat(straightLineKm.toFixed(1)),
-      route: routeData,
-      school: { name: schoolName, lat: schoolLat, lon: schoolLon },
-      accuracy: accuracy || null
-    }, 'Jarak berhasil dihitung');
+      route: routeData, // null jika layanan routing gagal / rute jalan tidak ditemukan
+      straightLineKm,   // estimasi garis lurus sebagai data pelengkap/fallback
+      school: {
+        name: schoolName,
+        address: schoolAddress,
+        lat: schoolLat,
+        lon: schoolLon
+      },
+      accuracy: accuracy ? parseFloat(accuracy) : null
+    }, routeData ? 'Rute perjalanan berhasil dihitung' : 'Layanan rute jalan tidak tersedia, menampilkan estimasi garis lurus');
 
   } catch (error) {
     console.error('Calculate Distance Error:', error);
-    errorResponse(res, 'Gagal menghitung jarak', ERROR_CODES.INTERNAL_ERROR);
+    errorResponse(res, 'Gagal memproses perhitungan rute', ERROR_CODES.INTERNAL_ERROR);
   }
 };

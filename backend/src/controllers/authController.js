@@ -1,4 +1,4 @@
-import pool from '../config/database.js';
+import supabase from '../config/database.js';
 import { hashPassword, comparePassword, isValidEmail, isValidWhatsApp, isStrongPassword, generateRegistrationNumber } from '../utils/validators.js';
 import { generateToken } from '../utils/jwt.js';
 import { successResponse, errorResponse, ERROR_CODES } from '../utils/errors.js';
@@ -30,11 +30,15 @@ export const register = async (req, res) => {
     }
 
     // Check if email already exists
-    const connection = await pool.getConnection();
-    const [existingUser] = await connection.execute('SELECT id FROM users WHERE email = ?', [email]);
-    
-    if (existingUser.length > 0) {
-      connection.release();
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (checkError) throw checkError;
+
+    if (existingUser) {
       return errorResponse(res, 'Email sudah terdaftar', ERROR_CODES.CONFLICT);
     }
 
@@ -43,14 +47,22 @@ export const register = async (req, res) => {
     const registrationNumber = generateRegistrationNumber();
 
     // Insert user
-    const [result] = await connection.execute(
-      'INSERT INTO users (registration_number, full_name, email, whatsapp, password) VALUES (?, ?, ?, ?, ?)',
-      [registrationNumber, full_name, email, whatsapp, hashedPassword]
-    );
+    const { data: newUser, error: insertError } = await supabase
+      .from('users')
+      .insert({
+        registration_number: registrationNumber,
+        full_name,
+        email,
+        whatsapp,
+        password: hashedPassword,
+        registration_status: 'pending'
+      })
+      .select('id')
+      .single();
 
-    connection.release();
+    if (insertError) throw insertError;
 
-    const userId = result.insertId;
+    const userId = newUser.id;
     const token = generateToken(userId, email, 'user');
 
     successResponse(res, {
@@ -77,27 +89,23 @@ export const login = async (req, res) => {
     }
 
     // Get user
-    const connection = await pool.getConnection();
-    const [users] = await connection.execute(
-      'SELECT id, email, password, full_name, registration_number FROM users WHERE email = ?',
-      [email]
-    );
+    const { data: user, error: fetchError } = await supabase
+      .from('users')
+      .select('id, email, password, full_name, registration_number')
+      .eq('email', email)
+      .maybeSingle();
 
-    if (users.length === 0) {
-      connection.release();
+    if (fetchError) throw fetchError;
+
+    if (!user) {
       return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
     }
-
-    const user = users[0];
 
     // Compare password
     const isPasswordValid = await comparePassword(password, user.password);
     if (!isPasswordValid) {
-      connection.release();
       return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
     }
-
-    connection.release();
 
     const token = generateToken(user.id, user.email, 'user');
 
@@ -124,26 +132,22 @@ export const adminLogin = async (req, res) => {
       return errorResponse(res, 'Email dan password harus diisi', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
-    const [admins] = await connection.execute(
-      'SELECT id, email, password, username, role FROM admin_users WHERE email = ?',
-      [email]
-    );
+    const { data: admin, error: fetchError } = await supabase
+      .from('admin_users')
+      .select('id, email, password, username, role')
+      .eq('email', email)
+      .maybeSingle();
 
-    if (admins.length === 0) {
-      connection.release();
+    if (fetchError) throw fetchError;
+
+    if (!admin) {
       return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
     }
 
-    const admin = admins[0];
     const isPasswordValid = await comparePassword(password, admin.password);
-    
     if (!isPasswordValid) {
-      connection.release();
       return errorResponse(res, 'Email atau password salah', ERROR_CODES.UNAUTHORIZED);
     }
-
-    connection.release();
 
     const token = generateToken(admin.id, admin.email, admin.role);
 
@@ -164,28 +168,27 @@ export const adminLogin = async (req, res) => {
 export const getCurrentUser = async (req, res) => {
   try {
     const { userId, role } = req.user;
-    const connection = await pool.getConnection();
     let user = null;
 
     if (role === 'admin' || role === 'super_admin') {
-      const [admins] = await connection.execute(
-        'SELECT id, email, username, role FROM admin_users WHERE id = ?',
-        [userId]
-      );
-      if (admins.length > 0) {
-        user = { ...admins[0], full_name: admins[0].username }; // Map username to full_name for UI consistency
+      const { data, error } = await supabase
+        .from('admin_users')
+        .select('id, email, username, role')
+        .eq('id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) {
+        user = { ...data, full_name: data.username };
       }
     } else {
-      const [users] = await connection.execute(
-        'SELECT id, email, full_name, registration_number, registration_status, registration_date FROM users WHERE id = ?',
-        [userId]
-      );
-      if (users.length > 0) {
-        user = users[0];
-      }
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, email, full_name, registration_number, registration_status, registration_date')
+        .eq('id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      user = data;
     }
-
-    connection.release();
 
     if (!user) {
       return errorResponse(res, 'User tidak ditemukan', ERROR_CODES.NOT_FOUND);
@@ -215,30 +218,31 @@ export const changePassword = async (req, res) => {
       return errorResponse(res, 'Password minimal 8 karakter', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
-    const [users] = await connection.execute(
-      'SELECT password FROM users WHERE id = ?',
-      [req.user.userId]
-    );
+    const { data: user, error: fetchError } = await supabase
+      .from('users')
+      .select('password')
+      .eq('id', req.user.userId)
+      .maybeSingle();
 
-    if (users.length === 0) {
-      connection.release();
+    if (fetchError) throw fetchError;
+
+    if (!user) {
       return errorResponse(res, 'User tidak ditemukan', ERROR_CODES.NOT_FOUND);
     }
 
-    const isPasswordValid = await comparePassword(oldPassword, users[0].password);
+    const isPasswordValid = await comparePassword(oldPassword, user.password);
     if (!isPasswordValid) {
-      connection.release();
       return errorResponse(res, 'Password lama tidak sesuai', ERROR_CODES.UNAUTHORIZED);
     }
 
     const hashedNewPassword = await hashPassword(newPassword);
-    await connection.execute(
-      'UPDATE users SET password = ? WHERE id = ?',
-      [hashedNewPassword, req.user.userId]
-    );
 
-    connection.release();
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password: hashedNewPassword })
+      .eq('id', req.user.userId);
+
+    if (updateError) throw updateError;
 
     successResponse(res, {}, 'Password berhasil diubah');
   } catch (error) {

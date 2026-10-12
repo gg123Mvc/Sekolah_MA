@@ -1,31 +1,35 @@
-import pool from '../config/database.js';
+import supabase from '../config/database.js';
 import { successResponse, errorResponse, ERROR_CODES } from '../utils/errors.js';
 
 // Get Dashboard Stats for Admin
 export const getAdminStats = async (req, res) => {
   try {
-    const connection = await pool.getConnection();
+    const [totalRes, pendingRes, acceptedRes, rejectedRes, revisionRes, majorsRes] = await Promise.all([
+      supabase.from('users').select('id', { count: 'exact', head: true }),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('registration_status', 'pending'),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('registration_status', 'accepted'),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('registration_status', 'rejected'),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('registration_status', 'revision'),
+      supabase.from('school_data').select('major_choice')
+    ]);
 
-    const [totalUsers] = await connection.execute('SELECT COUNT(*) as count FROM users');
-    const [pendingUsers] = await connection.execute('SELECT COUNT(*) as count FROM users WHERE registration_status = "pending"');
-    const [acceptedUsers] = await connection.execute('SELECT COUNT(*) as count FROM users WHERE registration_status = "accepted"');
-    const [rejectedUsers] = await connection.execute('SELECT COUNT(*) as count FROM users WHERE registration_status = "rejected"');
-    const [revisionUsers] = await connection.execute('SELECT COUNT(*) as count FROM users WHERE registration_status = "revision"');
-
-    // Get major distribution
-    const [majors] = await connection.execute(
-      'SELECT major_choice, COUNT(*) as count FROM school_data GROUP BY major_choice'
-    );
-
-    connection.release();
+    // Count majors manually
+    const majorCounts = {};
+    if (majorsRes.data) {
+      for (const row of majorsRes.data) {
+        const m = row.major_choice || 'Tidak Diisi';
+        majorCounts[m] = (majorCounts[m] || 0) + 1;
+      }
+    }
+    const majors = Object.entries(majorCounts).map(([major_choice, count]) => ({ major_choice, count }));
 
     successResponse(res, {
-      total: totalUsers[0].count,
-      pending: pendingUsers[0].count,
-      accepted: acceptedUsers[0].count,
-      rejected: rejectedUsers[0].count,
-      revision: revisionUsers[0].count,
-      majors: majors
+      total: totalRes.count || 0,
+      pending: pendingRes.count || 0,
+      accepted: acceptedRes.count || 0,
+      rejected: rejectedRes.count || 0,
+      revision: revisionRes.count || 0,
+      majors
     }, 'Admin stats berhasil diambil');
   } catch (error) {
     console.error(error);
@@ -37,40 +41,38 @@ export const getAdminStats = async (req, res) => {
 export const getAllApplicants = async (req, res) => {
   try {
     const { status, search, limit = 10, offset = 0 } = req.query;
-    const connection = await pool.getConnection();
+    const pageLimit = parseInt(limit);
+    const pageOffset = parseInt(offset);
 
-    let query = `
-      SELECT u.id, u.registration_number, u.full_name, u.email, u.registration_status, u.registration_date,
-             sd.major_choice, sd.school_name
-      FROM users u
-      LEFT JOIN school_data sd ON u.id = sd.user_id
-      WHERE 1=1
-    `;
-    const params = [];
+    let query = supabase
+      .from('users')
+      .select(`
+        id, registration_number, full_name, email, registration_status, registration_date,
+        school_data ( major_choice, school_name )
+      `, { count: 'exact' })
+      .order('registration_date', { ascending: false })
+      .range(pageOffset, pageOffset + pageLimit - 1);
 
     if (status) {
-      query += ' AND u.registration_status = ?';
-      params.push(status);
+      query = query.eq('registration_status', status);
     }
 
     if (search) {
-      query += ' AND (u.full_name LIKE ? OR u.registration_number LIKE ? OR u.email LIKE ?)';
-      const searchParam = `%${search}%`;
-      params.push(searchParam, searchParam, searchParam);
+      query = query.or(`full_name.ilike.%${search}%,registration_number.ilike.%${search}%,email.ilike.%${search}%`);
     }
 
-    query += ' ORDER BY u.registration_date DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
+    const { data, count, error } = await query;
+    if (error) throw error;
 
-    const [applicants] = await connection.execute(query, params);
-    const [totalCount] = await connection.execute('SELECT COUNT(*) as count FROM users');
+    // Flatten school_data
+    const applicants = (data || []).map(u => ({
+      ...u,
+      major_choice: u.school_data?.major_choice || null,
+      school_name: u.school_data?.school_name || null,
+      school_data: undefined
+    }));
 
-    connection.release();
-
-    successResponse(res, {
-      applicants,
-      total: totalCount[0].count
-    }, 'Daftar pendaftar berhasil diambil');
+    successResponse(res, { applicants, total: count || 0 }, 'Daftar pendaftar berhasil diambil');
   } catch (error) {
     console.error(error);
     errorResponse(res, 'Terjadi kesalahan', ERROR_CODES.INTERNAL_ERROR);
@@ -81,58 +83,34 @@ export const getAllApplicants = async (req, res) => {
 export const getApplicantDetail = async (req, res) => {
   try {
     const { id } = req.params;
-    const connection = await pool.getConnection();
 
-    // User core info
-    const [user] = await connection.execute(
-      'SELECT id, registration_number, full_name, email, whatsapp, registration_status, registration_date FROM users WHERE id = ?',
-      [id]
-    );
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, registration_number, full_name, email, whatsapp, registration_status, registration_date')
+      .eq('id', id)
+      .maybeSingle();
 
-    if (user.length === 0) {
-      connection.release();
+    if (userError) throw userError;
+
+    if (!user) {
       return errorResponse(res, 'Pendaftar tidak ditemukan', ERROR_CODES.NOT_FOUND);
     }
 
-    // Personal Data
-    const [personalData] = await connection.execute(
-      'SELECT * FROM personal_data WHERE user_id = ?',
-      [id]
-    );
-
-    // Parent Data
-    const [parentData] = await connection.execute(
-      'SELECT * FROM parent_data WHERE user_id = ?',
-      [id]
-    );
-
-    // School Data
-    const [schoolData] = await connection.execute(
-      'SELECT * FROM school_data WHERE user_id = ?',
-      [id]
-    );
-
-    // Documents
-    const [documents] = await connection.execute(
-      'SELECT * FROM documents WHERE user_id = ?',
-      [id]
-    );
-
-    // Revision Notes
-    const [revisionNotes] = await connection.execute(
-      'SELECT * FROM revision_notes WHERE user_id = ? ORDER BY created_at DESC',
-      [id]
-    );
-
-    connection.release();
+    const [personalRes, parentRes, schoolRes, docsRes, revisionRes] = await Promise.all([
+      supabase.from('personal_data').select('*').eq('user_id', id).maybeSingle(),
+      supabase.from('parent_data').select('*').eq('user_id', id).maybeSingle(),
+      supabase.from('school_data').select('*').eq('user_id', id).maybeSingle(),
+      supabase.from('documents').select('*').eq('user_id', id),
+      supabase.from('revision_notes').select('*').eq('user_id', id).order('created_at', { ascending: false })
+    ]);
 
     successResponse(res, {
-      user: user[0],
-      personalData: personalData[0] || null,
-      parentData: parentData[0] || null,
-      schoolData: schoolData[0] || null,
-      documents: documents,
-      revisionNotes: revisionNotes
+      user,
+      personalData: personalRes.data || null,
+      parentData: parentRes.data || null,
+      schoolData: schoolRes.data || null,
+      documents: docsRes.data || [],
+      revisionNotes: revisionRes.data || []
     }, 'Detail pendaftar berhasil diambil');
   } catch (error) {
     console.error(error);
@@ -150,22 +128,21 @@ export const updateApplicantStatus = async (req, res) => {
       return errorResponse(res, 'Status tidak valid', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
+    const { error } = await supabase
+      .from('users')
+      .update({ registration_status: status })
+      .eq('id', id);
 
-    await connection.execute(
-      'UPDATE users SET registration_status = ? WHERE id = ?',
-      [status, id]
-    );
+    if (error) throw error;
 
     // If status is revision, add a note
     if (status === 'revision' && message) {
-      await connection.execute(
-        'INSERT INTO revision_notes (user_id, admin_name, revision_message) VALUES (?, ?, ?)',
-        [id, req.user.username || 'Admin', message]
-      );
+      await supabase.from('revision_notes').insert({
+        user_id: parseInt(id),
+        admin_name: req.user.username || 'Admin',
+        revision_message: message
+      });
     }
-
-    connection.release();
 
     successResponse(res, {}, `Status pendaftar berhasil diubah menjadi ${status}`);
   } catch (error) {
@@ -177,11 +154,19 @@ export const updateApplicantStatus = async (req, res) => {
 // Manage Announcements
 export const getAnnouncements = async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    const [announcements] = await connection.execute(
-      'SELECT a.*, au.username as creator_name FROM announcements a LEFT JOIN admin_users au ON a.created_by = au.id ORDER BY a.created_at DESC'
-    );
-    connection.release();
+    const { data, error } = await supabase
+      .from('announcements')
+      .select('*, admin_users ( username )')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    const announcements = (data || []).map(a => ({
+      ...a,
+      creator_name: a.admin_users?.username || null,
+      admin_users: undefined
+    }));
+
     successResponse(res, announcements, 'Daftar pengumuman berhasil diambil');
   } catch (error) {
     console.error(error);
@@ -198,12 +183,13 @@ export const createAnnouncement = async (req, res) => {
       return errorResponse(res, 'Judul dan konten harus diisi', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const connection = await pool.getConnection();
-    await connection.execute(
-      'INSERT INTO announcements (title, content, thumbnail, created_by) VALUES (?, ?, ?, ?)',
-      [title, content, thumbnail || null, adminId]
-    );
-    connection.release();
+    const { error } = await supabase.from('announcements').insert({
+      title, content,
+      thumbnail: thumbnail || null,
+      created_by: adminId
+    });
+
+    if (error) throw error;
 
     successResponse(res, {}, 'Pengumuman berhasil dibuat', 201);
   } catch (error) {
@@ -214,12 +200,9 @@ export const createAnnouncement = async (req, res) => {
 
 export const uploadAnnouncementImage = async (req, res) => {
   try {
-    console.log('--- Uploading Announcement Image ---');
     if (!req.file) {
-      console.log('No file received');
       return errorResponse(res, 'File gambar harus diupload', ERROR_CODES.VALIDATION_ERROR);
     }
-    console.log('File received:', req.file.filename);
     const filePath = `uploads/${req.file.filename}`;
     successResponse(res, { filePath }, 'Gambar berhasil diupload', 201);
   } catch (error) {
@@ -233,12 +216,11 @@ export const updateAnnouncement = async (req, res) => {
     const { id } = req.params;
     const { title, content, thumbnail } = req.body;
 
-    const connection = await pool.getConnection();
-    await connection.execute(
-      'UPDATE announcements SET title = ?, content = ?, thumbnail = ? WHERE id = ?',
-      [title, content, thumbnail || null, id]
-    );
-    connection.release();
+    const { error } = await supabase.from('announcements').update({
+      title, content, thumbnail: thumbnail || null
+    }).eq('id', id);
+
+    if (error) throw error;
 
     successResponse(res, {}, 'Pengumuman berhasil diperbarui');
   } catch (error) {
@@ -251,9 +233,8 @@ export const deleteAnnouncement = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const connection = await pool.getConnection();
-    await connection.execute('DELETE FROM announcements WHERE id = ?', [id]);
-    connection.release();
+    const { error } = await supabase.from('announcements').delete().eq('id', id);
+    if (error) throw error;
 
     successResponse(res, {}, 'Pengumuman berhasil dihapus');
   } catch (error) {
