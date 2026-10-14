@@ -49,19 +49,23 @@ app.use((req, res) => {
 // Error Handler
 app.use(errorHandler);
 
-// Start Server
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
-  console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 CORS: semua origin diizinkan`);
-});
+export default app;
 
-// Handle port already in use
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`❌ Port ${PORT} sudah digunakan. Jalankan perintah ini untuk mematikan proses lama:`);
-    console.error(`   Get-NetTCPConnection -LocalPort ${PORT} | Select OwningProcess | Stop-Process`);
-    process.exit(1);
-  }
-  throw err;
-});
+// Start Server locally if not running on Vercel
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
+    console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🌐 CORS: semua origin diizinkan`);
+  });
+
+  // Handle port already in use
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} sudah digunakan. Jalankan perintah ini untuk mematikan proses lama:`);
+      console.error(`   Get-NetTCPConnection -LocalPort ${PORT} | Select OwningProcess | Stop-Process`);
+      process.exit(1);
+    }
+    throw err;
+  });
+}

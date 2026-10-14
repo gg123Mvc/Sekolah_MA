@@ -10,7 +10,9 @@ import {
 import KnowledgeBase from './KnowledgeBase';
 import ComplaintsTab from './ComplaintsTab';
 
-const BACKEND_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+const BACKEND_URL = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace('/api', '')
+  : (import.meta.env.PROD ? '' : 'http://localhost:5000');
 
 const DOC_LABELS = {
   photo: 'Pas Foto',
