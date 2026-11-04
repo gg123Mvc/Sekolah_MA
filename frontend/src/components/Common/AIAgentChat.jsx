@@ -24,11 +24,7 @@ const AIAgentChat = () => {
 
   const formatResponseTime = (ms) => {
     if (!ms) return '';
-<<<<<<< HEAD
     return `${ms.toLocaleString('id-ID')} ms`;
-=======
-    return `${(ms / 1000).toFixed(1)}s`;
->>>>>>> origin/main
   };
 
   const markdownComponents = {
