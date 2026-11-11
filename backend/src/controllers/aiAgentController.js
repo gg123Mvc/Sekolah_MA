@@ -317,12 +317,7 @@ PRIORITAS ACTION & Knowledge Base
 
   // Model selection: prioritize models/gemini-3-flash-preview
   const candidateModels = [
-    process.env.GEMINI_MODEL || 'models/gemini-3-flash-preview',
-    'gemini-3-flash-preview',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash'
-  ];
+    process.env.GEMINI_MODEL || 'models/gemini-3-flash-preview'];
   const uniqueModels = [...new Set(candidateModels.filter(Boolean))];
 
   let lastError = null;
