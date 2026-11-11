@@ -1,8 +1,5 @@
 Add-Type -AssemblyName System.Drawing
 
-$imgPath = "c:\xampp\htdocs\Ma\frontend\public\logo_ma.jpg"
-$outPath = "c:\xampp\htdocs\Ma\frontend\public\logo_ma_round.png"
-
 $img = [System.Drawing.Image]::FromFile($imgPath)
 
 # Calculate size for a perfect circle (use the smaller dimension)

@@ -33,7 +33,7 @@ export const sendMessageToAI = async (req, res) => {
     } else if (askGrad) {
       aiResponse = "Silakan masukkan Nomor Registrasi Anda.\n\nContoh:\nSPMB-2026-003";
     } else {
-      aiResponse = await callNeoXRAI(message, history);
+      aiResponse = await callGeminiAI(message, history);
     }
 
     // Check for JSON action from AI
@@ -45,35 +45,39 @@ export const sendMessageToAI = async (req, res) => {
           try {
             const dateStr = new Date().toISOString().slice(0,10).replace(/-/g, '');
 
-            // Get last ticket number for today
-            const { data: lastTicket } = await supabase
-              .from('complaints')
-              .select('ticket_number')
-              .like('ticket_number', `CMP-${dateStr}-%`)
-              .order('id', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
             let nextNum = 1;
-            if (lastTicket) {
-              const lastNum = parseInt(lastTicket.ticket_number.split('-')[2]);
-              nextNum = lastNum + 1;
+            if (supabase) {
+              // Get last ticket number for today
+              const { data: lastTicket } = await supabase
+                .from('complaints')
+                .select('ticket_number')
+                .like('ticket_number', `CMP-${dateStr}-%`)
+                .order('id', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (lastTicket) {
+                const lastNum = parseInt(lastTicket.ticket_number.split('-')[2]);
+                nextNum = lastNum + 1;
+              }
             }
             const ticketNumber = `CMP-${dateStr}-${String(nextNum).padStart(5, '0')}`;
             
             const userId = (user && user.userId) ? user.userId : null;
             
-            const { error: insertError } = await supabase.from('complaints').insert({
-              ticket_number: ticketNumber,
-              user_id: userId,
-              category: actionData.category || 'Lainnya',
-              priority: actionData.priority || 'Low',
-              complaint: actionData.complaint || message,
-              summary: actionData.summary || 'Pengaduan pengguna',
-              status: 'Menunggu'
-            });
+            if (supabase) {
+              const { error: insertError } = await supabase.from('complaints').insert({
+                ticket_number: ticketNumber,
+                user_id: userId,
+                category: actionData.category || 'Lainnya',
+                priority: actionData.priority || 'Low',
+                complaint: actionData.complaint || message,
+                summary: actionData.summary || 'Pengaduan pengguna',
+                status: 'Menunggu'
+              });
 
-            if (insertError) throw insertError;
+              if (insertError) throw insertError;
+            }
             
             aiResponse = `====================================================\n\nTerima kasih.\n\nPengaduan Anda telah berhasil dicatat.\n\nNomor Tiket:\n${ticketNumber}\n\nKategori:\n${actionData.category || 'Lainnya'}\n\nStatus:\nMenunggu\n\nSilakan simpan nomor tiket tersebut untuk melakukan pengecekan status melalui MAIRA AI.\n\n====================================================`;
           } catch (dbErr) {
@@ -82,13 +86,17 @@ export const sendMessageToAI = async (req, res) => {
           }
         } else if (actionData.action === 'check_ticket') {
           try {
-            const { data: ticket, error } = await supabase
-              .from('complaints')
-              .select('*')
-              .eq('ticket_number', actionData.ticket_number)
-              .maybeSingle();
+            let ticket = null;
+            if (supabase) {
+              const { data, error } = await supabase
+                .from('complaints')
+                .select('*')
+                .eq('ticket_number', actionData.ticket_number)
+                .maybeSingle();
 
-            if (error) throw error;
+              if (error) throw error;
+              ticket = data;
+            }
             
             if (ticket) {
               const dateObj = new Date(ticket.updated_at);
@@ -105,13 +113,17 @@ export const sendMessageToAI = async (req, res) => {
           }
         } else if (actionData.action === 'check_graduation') {
           try {
-            const { data: rows, error } = await supabase
-              .from('users')
-              .select('registration_number, full_name, registration_status, school_data ( major_choice )')
-              .eq('registration_number', actionData.registration_number)
-              .maybeSingle();
+            let rows = null;
+            if (supabase) {
+              const { data, error } = await supabase
+                .from('users')
+                .select('registration_number, full_name, registration_status, school_data ( major_choice )')
+                .eq('registration_number', actionData.registration_number)
+                .maybeSingle();
 
-            if (error) throw error;
+              if (error) throw error;
+              rows = data;
+            }
             
             if (rows) {
               let statusText = '';
@@ -151,7 +163,7 @@ export const sendMessageToAI = async (req, res) => {
     const responseTimeMs = endTime - startTime;
 
     // Save to DB only if user is logged in
-    if (user && user.userId) {
+    if (supabase && user && user.userId) {
       const { error: historyError } = await supabase.from('chat_history').insert({
         user_id: user.userId,
         message,
@@ -172,25 +184,16 @@ export const sendMessageToAI = async (req, res) => {
   } catch (error) {
     console.error('AI Agent Error:', error);
     const status = error?.response?.status || 500;
-    const errorMessage = error?.response?.data?.message || error.message || 'Gagal memproses pesan';
+    const errorMessage = error?.response?.data?.error?.message || error?.response?.data?.message || error.message || 'Gagal memproses pesan';
     errorResponse(res, `Gagal memproses pesan (Status ${status}): ${errorMessage}`, ERROR_CODES.INTERNAL_ERROR);
   }
 };
 
-// Call NeoXR GPT-4 API
-const callNeoXRAI = async (message, history = []) => {
-  const apiKey = process.env.API_NEOXR;
+// Call Google Gemini API
+const callGeminiAI = async (message, history = []) => {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
   if (!apiKey) {
-    throw new Error('API_NEOXR tidak ditemukan dalam konfigurasi environment (.env)');
-  }
-  const url = "https://api.neoxr.eu/api/gpt4";
-
-  let historyText = "";
-  if (Array.isArray(history) && history.length > 0) {
-    historyText = "\n\nRiwayat Percakapan Sebelumnya:\n" + history.map(h => {
-      const aiTruncated = h.ai ? (h.ai.length > 250 ? h.ai.substring(0, 250) + '...' : h.ai) : '';
-      return `User: ${h.user}\nMAIRA AI: ${aiTruncated}`;
-    }).join("\n");
+    throw new Error('API Key Gemini tidak ditemukan dalam konfigurasi environment (.env). Pastikan GEMINI_API_KEY disetel di file .env');
   }
 
   const knowledgeBaseText = await getFormattedKnowledgeBase();
@@ -274,43 +277,133 @@ PRIORITAS ACTION & Knowledge Base
 3. Jarak/Rute → Arahkan ke fitur Cek Jarak GPS (teks panduan, BUKAN JSON)
 4. Pengaduan → create_complaint
 5. Selain itu → Knowledge Base
-=========================================================
-${historyText}
+=========================================================`;
 
-Tanya: ${message}`;
-
-  try {
-    const response = await axios.get(url, {
-      params: {
-        q: systemPrompt,
-        apikey: apiKey
-      },
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
-      },
-      timeout: 30000 
+  // Format contents for Gemini API (ensuring correct alternating user -> model turns)
+  const rawContents = [];
+  if (Array.isArray(history) && history.length > 0) {
+    history.forEach((h) => {
+      const userText = (h.user || h.userMessage || '').trim();
+      const aiText = (h.ai || h.aiResponse || h.response || '').trim();
+      if (userText) {
+        rawContents.push({
+          role: 'user',
+          parts: [{ text: userText }]
+        });
+      }
+      if (aiText) {
+        rawContents.push({
+          role: 'model',
+          parts: [{ text: aiText }]
+        });
+      }
     });
+  }
 
-    let text = '';
-    if (response.data && response.data.status) {
-      if (typeof response.data.data === 'object' && response.data.data.message) {
-        text = response.data.data.message;
-      } else if (typeof response.data.data === 'string') {
-        text = response.data.data;
+  rawContents.push({
+    role: 'user',
+    parts: [{ text: String(message).trim() }]
+  });
+
+  // Ensure consecutive items of same role are merged to prevent API 400 errors
+  const contents = [];
+  for (const item of rawContents) {
+    if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
+      contents[contents.length - 1].parts[0].text += `\n${item.parts[0].text}`;
+    } else {
+      contents.push(item);
+    }
+  }
+
+  // Model selection: prioritize models/gemini-3-flash-preview
+  const candidateModels = [
+    process.env.GEMINI_MODEL || 'models/gemini-3-flash-preview',
+    'gemini-3-flash-preview',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash'
+  ];
+  const uniqueModels = [...new Set(candidateModels.filter(Boolean))];
+
+  let lastError = null;
+
+  for (const rawModel of uniqueModels) {
+    const model = rawModel.replace(/^models\//, '');
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+      const payload = {
+        contents,
+        systemInstruction: {
+          parts: [{ text: systemPrompt }]
+        },
+        generationConfig: {
+          temperature: 0.5,
+          maxOutputTokens: 1000
+        }
+      };
+
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        timeout: 15000
+      });
+
+      const candidate = response.data?.candidates?.[0];
+      const text = candidate?.content?.parts?.map(p => p.text).join('') || '';
+
+      if (text && text.trim().length > 0) {
+        return text.trim();
+      }
+
+      if (candidate?.finishReason === 'SAFETY') {
+        return 'Mohon maaf, pesan Anda tidak dapat diproses karena pertimbangan kebijakan keamanan sistem.';
+      }
+    } catch (err) {
+      lastError = err;
+      const status = err.response?.status;
+      const errorMsg = err.response?.data?.error?.message || err.message;
+      console.warn(`Gemini API error with model ${model} (status ${status}):`, errorMsg);
+
+      // If model does not support systemInstruction (e.g. gemini-pro on v1beta), try fallback without systemInstruction
+      if (status === 400) {
+        try {
+          const fallbackContents = [
+            {
+              role: 'user',
+              parts: [{ text: `[PANDUAN SISTEM / INSTRUKSI]:\n${systemPrompt}\n\n[PESAN PENGGUNA]:\n${message}` }]
+            }
+          ];
+          const fallbackRes = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+            {
+              contents: fallbackContents,
+              generationConfig: { temperature: 0.5, maxOutputTokens: 1000 }
+            },
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+              },
+              timeout: 15000
+            }
+          );
+          const fbCandidate = fallbackRes.data?.candidates?.[0];
+          const fbText = fbCandidate?.content?.parts?.map(p => p.text).join('') || '';
+          if (fbText && fbText.trim().length > 0) {
+            return fbText.trim();
+          }
+        } catch (fbErr) {
+          console.warn(`Fallback prompt also failed for ${model}:`, fbErr.message);
+        }
       }
     }
-
-    if (!text) {
-      console.error('NeoXR Invalid Response Format:', JSON.stringify(response.data));
-      throw new Error('Format respons AI tidak valid atau kosong');
-    }
-    
-    return String(text);
-  } catch (err) {
-    console.error('NeoXR API Call Error:', err.message);
-    throw err;
   }
+
+  const detailedMessage = lastError?.response?.data?.error?.message || lastError?.message || 'Gagal memproses pesan dengan Gemini AI';
+  throw new Error(`Gemini AI Error: ${detailedMessage}`);
 };
 
 // Get Chat History
@@ -318,7 +411,7 @@ export const getChatHistory = async (req, res) => {
   try {
     const user = req.user;
     
-    if (!user || !user.userId) {
+    if (!user || !user.userId || !supabase) {
       return successResponse(res, [], 'Guest history empty');
     }
 
@@ -342,7 +435,7 @@ export const getChatHistory = async (req, res) => {
 export const clearChatHistory = async (req, res) => {
   try {
     const user = req.user;
-    if (!user || !user.userId) {
+    if (!user || !user.userId || !supabase) {
       return successResponse(res, {}, 'Guest chat history cleared');
     }
 

@@ -96,6 +96,8 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
   const handleSendMessage = async (e) => {
     e.preventDefault();
 
+    if (loading) return;
+
     if (!message.trim()) {
       toast.error('Pesan tidak boleh kosong');
       return;
@@ -346,7 +348,6 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Tanyakan sesuatu..."
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm"
-                disabled={loading}
               />
               <button
                 type="submit"
