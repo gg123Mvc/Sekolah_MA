@@ -257,13 +257,6 @@ Jika ada kata "cek tiket", "status pengaduan" ATAU menyebut Nomor Tiket, AI WAJI
 }
 Jika minta cek tanpa nomor tiket, minta nomornya.
 
-=========================================================
-PENGECEKAN JARAK DAN RUTE KE SEKOLAH
-=========================================================
-Jika pengguna bertanya tentang jarak, rute, atau lokasi ke sekolah (misal: "berapa jarak ke sekolah?", "cek jarak saya ke sekolah", "rute dari tempat saya ke sekolah"), AI WAJIB merespons dengan teks panduan berikut:
-
-"📍 Untuk mengecek jarak dari lokasi Anda ke sekolah, silakan gunakan fitur **Cek Jarak** yang tersedia di halaman ini. Fitur tersebut menggunakan GPS perangkat Anda untuk menentukan lokasi secara akurat, lalu menghitung jarak dan estimasi waktu perjalanan ke MA Bina Cendekia secara otomatis. Cukup klik tombol **Cek Jarak** dan berikan izin akses lokasi ketika diminta."
-
 AI DILARANG KERAS:
 - Meminta pengguna memasukkan nama desa, kecamatan, atau lokasi secara manual.
 - Mengaku sudah mengetahui lokasi pengguna sebelum GPS berhasil memperoleh koordinat.
@@ -274,9 +267,8 @@ PRIORITAS ACTION & Knowledge Base
 =========================================================
 1. No Tiket (CMP-xxxx) → check_ticket
 2. No Registrasi (SPMB-xxxx / REGxxxx) → check_graduation
-3. Jarak/Rute → Arahkan ke fitur Cek Jarak GPS (teks panduan, BUKAN JSON)
-4. Pengaduan → create_complaint
-5. Selain itu → Knowledge Base
+3. Pengaduan → create_complaint
+4. Selain itu → Knowledge Base
 =========================================================`;
 
   // Format messages for Groq API (OpenAI format)
