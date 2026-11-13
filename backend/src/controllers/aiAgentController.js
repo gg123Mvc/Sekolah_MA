@@ -191,7 +191,7 @@ export const sendMessageToAI = async (req, res) => {
 
 // Get Chat History
 export const getChatHistory = async (req, res) => {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
   if (!apiKey) {
     throw new Error('API Key Gemini tidak ditemukan dalam konfigurasi environment (.env). Pastikan GEMINI_API_KEY disetel di file .env');
   }
@@ -279,7 +279,7 @@ PRIORITAS ACTION & Knowledge Base
 5. Selain itu → Knowledge Base
 =========================================================`;
 
-  // Format contents for Gemini API (ensuring correct alternating user -> model turns)
+  // Format contents for Groq API (ensuring correct alternating user -> model turns)
   const rawContents = [];
   if (Array.isArray(history) && history.length > 0) {
     history.forEach((h) => {
@@ -315,9 +315,8 @@ PRIORITAS ACTION & Knowledge Base
     }
   }
 
-  // Model selection: prioritize models/gemini-3-flash-preview
   const candidateModels = [
-    process.env.GEMINI_MODEL || 'models/gemini-3-flash-preview'];
+    process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
   const uniqueModels = [...new Set(candidateModels.filter(Boolean))];
 
   let lastError = null;
@@ -325,7 +324,7 @@ PRIORITAS ACTION & Knowledge Base
   for (const rawModel of uniqueModels) {
     const model = rawModel.replace(/^models\//, '');
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = `https://api.groq.com/openai/v1/chat/completions/${model}:generateContent?key=${apiKey}`;
 
       const payload = {
         contents,
