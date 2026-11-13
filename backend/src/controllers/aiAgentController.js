@@ -33,7 +33,7 @@ export const sendMessageToAI = async (req, res) => {
     } else if (askGrad) {
       aiResponse = "Silakan masukkan Nomor Registrasi Anda.\n\nContoh:\nSPMB-2026-003";
     } else {
-      aiResponse = await callGeminiAI(message, history);
+      aiResponse = await callGroqAI(message, history);
     }
 
     // Check for JSON action from AI
@@ -189,8 +189,8 @@ export const sendMessageToAI = async (req, res) => {
   }
 };
 
-// Call Google Gemini API
-const callGeminiAI = async (message, history = []) => {
+// Get Chat History
+export const getChatHistory = async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
   if (!apiKey) {
     throw new Error('API Key Gemini tidak ditemukan dalam konfigurasi environment (.env). Pastikan GEMINI_API_KEY disetel di file .env');
