@@ -189,11 +189,11 @@ export const sendMessageToAI = async (req, res) => {
   }
 };
 
-// Get Chat History
-export const getChatHistory = async (req, res) => {
+// Call Groq API (OpenAI-compatible format)
+const callGroqAI = async (message, history = []) => {
   const apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
   if (!apiKey) {
-    throw new Error('API Key Gemini tidak ditemukan dalam konfigurasi environment (.env). Pastikan GEMINI_API_KEY disetel di file .env');
+    throw new Error('API Key Groq tidak ditemukan dalam konfigurasi environment (.env). Pastikan GROQ_API_KEY disetel di file .env');
   }
 
   const knowledgeBaseText = await getFormattedKnowledgeBase();
@@ -279,125 +279,71 @@ PRIORITAS ACTION & Knowledge Base
 5. Selain itu → Knowledge Base
 =========================================================`;
 
-  // Format contents for Groq API (ensuring correct alternating user -> model turns)
-  const rawContents = [];
+  // Format messages for Groq API (OpenAI format)
+  const messages = [
+    { role: 'system', content: systemPrompt }
+  ];
+
   if (Array.isArray(history) && history.length > 0) {
     history.forEach((h) => {
       const userText = (h.user || h.userMessage || '').trim();
       const aiText = (h.ai || h.aiResponse || h.response || '').trim();
       if (userText) {
-        rawContents.push({
-          role: 'user',
-          parts: [{ text: userText }]
-        });
+        messages.push({ role: 'user', content: userText });
       }
       if (aiText) {
-        rawContents.push({
-          role: 'model',
-          parts: [{ text: aiText }]
-        });
+        messages.push({ role: 'assistant', content: aiText });
       }
     });
   }
 
-  rawContents.push({
+  messages.push({
     role: 'user',
-    parts: [{ text: String(message).trim() }]
+    content: String(message).trim()
   });
 
-  // Ensure consecutive items of same role are merged to prevent API 400 errors
-  const contents = [];
-  for (const item of rawContents) {
-    if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
-      contents[contents.length - 1].parts[0].text += `\n${item.parts[0].text}`;
-    } else {
-      contents.push(item);
-    }
-  }
+  const model = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+  const url = 'https://api.groq.com/openai/v1/chat/completions';
 
-  const candidateModels = [
-    process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
-  const uniqueModels = [...new Set(candidateModels.filter(Boolean))];
-
-  let lastError = null;
-
-  for (const rawModel of uniqueModels) {
-    const model = rawModel.replace(/^models\//, '');
-    try {
-      const url = `https://api.groq.com/openai/v1/chat/completions/${model}:generateContent?key=${apiKey}`;
-
-      const payload = {
-        contents,
-        systemInstruction: {
-          parts: [{ text: systemPrompt }]
-        },
-        generationConfig: {
-          temperature: 0.5,
-          maxOutputTokens: 1000
-        }
-      };
-
-      const response = await axios.post(url, payload, {
+  try {
+    const response = await axios.post(
+      url,
+      {
+        model,
+        messages,
+        temperature: 0.5,
+        max_tokens: 1000
+      },
+      {
         headers: {
           'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
-        timeout: 15000
-      });
-
-      const candidate = response.data?.candidates?.[0];
-      const text = candidate?.content?.parts?.map(p => p.text).join('') || '';
-
-      if (text && text.trim().length > 0) {
-        return text.trim();
+        timeout: 20000
       }
+    );
 
-      if (candidate?.finishReason === 'SAFETY') {
-        return 'Mohon maaf, pesan Anda tidak dapat diproses karena pertimbangan kebijakan keamanan sistem.';
-      }
-    } catch (err) {
-      lastError = err;
-      const status = err.response?.status;
-      const errorMsg = err.response?.data?.error?.message || err.message;
-      console.warn(`Gemini API error with model ${model} (status ${status}):`, errorMsg);
+    let text = response.data?.choices?.[0]?.message?.content || '';
 
-      // If model does not support systemInstruction (e.g. gemini-pro on v1beta), try fallback without systemInstruction
-      if (status === 400) {
-        try {
-          const fallbackContents = [
-            {
-              role: 'user',
-              parts: [{ text: `[PANDUAN SISTEM / INSTRUKSI]:\n${systemPrompt}\n\n[PESAN PENGGUNA]:\n${message}` }]
-            }
-          ];
-          const fallbackRes = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            {
-              contents: fallbackContents,
-              generationConfig: { temperature: 0.5, maxOutputTokens: 1000 }
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': apiKey
-              },
-              timeout: 15000
-            }
-          );
-          const fbCandidate = fallbackRes.data?.candidates?.[0];
-          const fbText = fbCandidate?.content?.parts?.map(p => p.text).join('') || '';
-          if (fbText && fbText.trim().length > 0) {
-            return fbText.trim();
-          }
-        } catch (fbErr) {
-          console.warn(`Fallback prompt also failed for ${model}:`, fbErr.message);
-        }
+    // Remove reasoning tags if any
+    if (text.includes('<think>')) {
+      const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      if (cleaned) {
+        text = cleaned;
       }
     }
-  }
 
-  const detailedMessage = lastError?.response?.data?.error?.message || lastError?.message || 'Gagal memproses pesan dengan Gemini AI';
-  throw new Error(`Gemini AI Error: ${detailedMessage}`);
+    if (text && text.trim().length > 0) {
+      return text.trim();
+    }
+
+    throw new Error('Respons dari Groq AI kosong');
+  } catch (err) {
+    const status = err.response?.status;
+    const errorMsg = err.response?.data?.error?.message || err.message;
+    console.error(`Groq API error with model ${model} (status ${status}):`, errorMsg);
+    throw new Error(`Groq AI Error: ${errorMsg}`);
+  }
 };
 
 // Get Chat History
