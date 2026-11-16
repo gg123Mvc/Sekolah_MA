@@ -9,6 +9,7 @@ import aiAgentRoutes from './routes/aiAgentRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import knowledgeBaseRoutes from './routes/knowledgeBaseRoutes.js';
+import chatbotSettingsRoutes from './routes/chatbotSettingsRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -35,6 +36,7 @@ app.use('/api/ai-agent', aiAgentRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/knowledge-base', knowledgeBaseRoutes);
+app.use('/api/admin/chatbot-settings', chatbotSettingsRoutes);
 
 // Health Check Route
 app.get('/api/health', (req, res) => {

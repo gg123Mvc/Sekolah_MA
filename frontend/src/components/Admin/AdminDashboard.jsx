@@ -5,10 +5,12 @@ import {
   FiUsers, FiCheckCircle, FiClock, FiAlertCircle, 
   FiBarChart2, FiMessageSquare, FiLogOut, FiEye, 
   FiSearch, FiDownload, FiMenu, FiX, FiFile, FiImage, FiExternalLink,
-  FiPlus, FiEdit3, FiTrash2, FiDatabase, FiTag
+  FiPlus, FiEdit3, FiTrash2, FiDatabase, FiTag, FiCpu, FiActivity
 } from 'react-icons/fi';
 import KnowledgeBase from './KnowledgeBase';
 import ComplaintsTab from './ComplaintsTab';
+import ChatbotSettingsTab from './ChatbotSettingsTab';
+import ChatbotLogsTab from './ChatbotLogsTab';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL.replace('/api', '')
@@ -188,6 +190,8 @@ const AdminDashboard = ({ onLogout }) => {
     { id: 'announcements', label: 'Pengumuman', icon: <FiMessageSquare /> },
     { id: 'complaints', label: 'Pengaduan AI', icon: <FiTag /> },
     { id: 'knowledgebase', label: 'Knowledge Base AI', icon: <FiDatabase /> },
+    { id: 'chatbot-settings', label: 'Pengaturan AI & n8n', icon: <FiCpu /> },
+    { id: 'chatbot-logs', label: 'Monitoring & Log AI', icon: <FiActivity /> },
   ];
 
   return (
@@ -475,6 +479,16 @@ const AdminDashboard = ({ onLogout }) => {
           {/* COMPLAINTS TAB */}
           {activeTab === 'complaints' && (
             <ComplaintsTab />
+          )}
+
+          {/* CHATBOT AI & N8N SETTINGS TAB */}
+          {activeTab === 'chatbot-settings' && (
+            <ChatbotSettingsTab />
+          )}
+
+          {/* CHATBOT MONITORING & LOGS TAB */}
+          {activeTab === 'chatbot-logs' && (
+            <ChatbotLogsTab />
           )}
         </main>
       </div>

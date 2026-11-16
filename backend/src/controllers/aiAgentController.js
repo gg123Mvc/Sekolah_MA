@@ -2,9 +2,19 @@ import supabase from '../config/database.js';
 import { successResponse, errorResponse, ERROR_CODES } from '../utils/errors.js';
 import axios from 'axios';
 import { getFormattedKnowledgeBase } from './knowledgeBaseController.js';
+import ChatbotSettings from '../models/chatbotSettingsModel.js';
+import { decrypt } from '../utils/encryption.js';
+import { validateWebhookUrl } from '../utils/ssrfProtection.js';
 
 // Send Message to AI Agent
 export const sendMessageToAI = async (req, res) => {
+  const startTime = Date.now();
+  let currentSettings = null;
+  let activeMode = 'direct';
+  let activeProvider = 'groq';
+  let activeModel = 'openai/gpt-oss-20b';
+  let webhookStatus = null;
+
   try {
     const { message, history } = req.body;
     const user = req.user;
@@ -13,7 +23,12 @@ export const sendMessageToAI = async (req, res) => {
       return errorResponse(res, 'Pesan tidak boleh kosong', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    const startTime = Date.now();
+    // Ambil konfigurasi dinamis dari database
+    currentSettings = await ChatbotSettings.getActive();
+    activeProvider = currentSettings?.provider || 'groq';
+    activeModel = currentSettings?.model || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+    activeMode = currentSettings?.chatbot_mode || 'direct';
+
     let aiResponse = "";
     
     // Interceptor: Deteksi otomatis nomor registrasi atau tiket untuk mempercepat respon 
@@ -33,7 +48,25 @@ export const sendMessageToAI = async (req, res) => {
     } else if (askGrad) {
       aiResponse = "Silakan masukkan Nomor Registrasi Anda.\n\nContoh:\nSPMB-2026-003";
     } else {
+<<<<<<< HEAD
       aiResponse = await callGroqAI(message, history);
+=======
+      // Jalankan sesuai mode chatbot yang dikonfigurasi admin
+      if (activeMode === 'n8n' && currentSettings?.webhook_enabled && currentSettings?.webhook_url) {
+        try {
+          const webhookResult = await callN8NWebhook(message, history, currentSettings, user);
+          aiResponse = webhookResult.response;
+          webhookStatus = `HTTP ${webhookResult.httpStatus || 200}`;
+        } catch (webhookErr) {
+          console.warn('Webhook n8n gagal, beralih otomatis ke AI Provider:', webhookErr.message);
+          webhookStatus = `Error: ${webhookErr.message.slice(0, 100)}`;
+          // Fallback ke AI Provider langsung agar chatbot tidak berhenti bekerja
+          aiResponse = await callAIProvider(message, history, currentSettings);
+        }
+      } else {
+        aiResponse = await callAIProvider(message, history, currentSettings);
+      }
+>>>>>>> 8934a9a (Update project Sekolah MA)
     }
 
     // Check for JSON action from AI
@@ -162,7 +195,7 @@ export const sendMessageToAI = async (req, res) => {
     const endTime = Date.now();
     const responseTimeMs = endTime - startTime;
 
-    // Save to DB only if user is logged in
+    // Simpan ke riwayat chat user yang sedang login
     if (supabase && user && user.userId) {
       const { error: historyError } = await supabase.from('chat_history').insert({
         user_id: user.userId,
@@ -174,26 +207,135 @@ export const sendMessageToAI = async (req, res) => {
       if (historyError) console.error('Failed to save chat history:', historyError.message);
     }
 
+    // Catat ke log monitoring admin (chatbot_logs)
+    await ChatbotSettings.addLog({
+      user_id: user?.userId || null,
+      question: message,
+      provider: activeProvider,
+      model: activeModel,
+      chatbot_mode: activeMode,
+      status: 'success',
+      response_time_ms: responseTimeMs,
+      webhook_status: webhookStatus,
+      error_message: null
+    });
+
     successResponse(res, {
       user_message: message,
       ai_response: aiResponse,
       timestamp: new Date(),
-      response_time_ms: responseTimeMs
-    }, 'Pesan berhasil dikirim');
+      response_time_ms: responseTimeMs,
+      provider: activeProvider,
+      model: activeModel,
+      mode: activeMode
+    }, 'Pesan berhasil diproses');
 
   } catch (error) {
+    const responseTimeMs = Date.now() - startTime;
     console.error('AI Agent Error:', error);
     const status = error?.response?.status || 500;
     const errorMessage = error?.response?.data?.error?.message || error?.response?.data?.message || error.message || 'Gagal memproses pesan';
+
+    // Catat kegagalan ke log monitoring admin
+    await ChatbotSettings.addLog({
+      user_id: req.user?.userId || null,
+      question: req.body?.message || '',
+      provider: activeProvider,
+      model: activeModel,
+      chatbot_mode: activeMode,
+      status: 'error',
+      response_time_ms: responseTimeMs,
+      webhook_status: webhookStatus,
+      error_message: `Status ${status}: ${errorMessage}`
+    });
+
     errorResponse(res, `Gagal memproses pesan (Status ${status}): ${errorMessage}`, ERROR_CODES.INTERNAL_ERROR);
   }
 };
 
+<<<<<<< HEAD
 // Call Groq API (OpenAI-compatible format)
 const callGroqAI = async (message, history = []) => {
   const apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
   if (!apiKey) {
     throw new Error('API Key Groq tidak ditemukan dalam konfigurasi environment (.env). Pastikan GROQ_API_KEY disetel di file .env');
+=======
+/**
+ * Panggil Webhook n8n (Mode 2)
+ */
+const callN8NWebhook = async (message, history = [], settings, user = null) => {
+  const webhookUrl = settings.webhook_url;
+  if (!webhookUrl) {
+    throw new Error('URL Webhook n8n belum dikonfigurasi');
+  }
+
+  // Validasi keamanan SSRF
+  await validateWebhookUrl(webhookUrl);
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'SPMB-Madrasah-Chatbot/1.0'
+  };
+
+  if (settings.webhook_auth_encrypted) {
+    const authSecret = decrypt(settings.webhook_auth_encrypted);
+    if (authSecret) {
+      headers['Authorization'] = authSecret.startsWith('Bearer ') || authSecret.startsWith('Basic ')
+        ? authSecret
+        : `Bearer ${authSecret}`;
+      headers['X-API-KEY'] = authSecret;
+    }
+  }
+
+  const payload = {
+    message,
+    history,
+    user: user ? { id: user.userId, email: user.email, role: user.role } : null,
+    timestamp: new Date().toISOString()
+  };
+
+  const response = await axios.post(webhookUrl, payload, {
+    headers,
+    timeout: 25000 // 25 detik timeout
+  });
+
+  // Ekstrak teks respons n8n (bisa berupa { response }, { message }, { output }, atau string langsung)
+  let replyText = '';
+  if (typeof response.data === 'string') {
+    replyText = response.data;
+  } else if (response.data && typeof response.data === 'object') {
+    replyText = response.data.response || response.data.message || response.data.output || response.data.text || JSON.stringify(response.data);
+  }
+
+  if (!replyText || !replyText.trim()) {
+    throw new Error('Webhook n8n merespons tanpa konten teks jawaban');
+  }
+
+  return {
+    response: replyText.trim(),
+    httpStatus: response.status
+  };
+};
+
+/**
+ * Panggil AI Provider secara Dinamis (Mode 1: Groq, OpenAI, Google Gemini, OpenRouter)
+ */
+const callAIProvider = async (message, history = [], settings = null) => {
+  const provider = (settings?.provider || 'groq').toLowerCase();
+  const model = settings?.model || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+
+  // Dapatkan API Key (dari database terenkripsi, atau fallback ke .env)
+  let apiKey = null;
+  if (settings?.api_key_encrypted) {
+    apiKey = decrypt(settings.api_key_encrypted);
+  }
+  if (!apiKey) {
+    apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
+  }
+
+  if (!apiKey) {
+    throw new Error(`API Key untuk ${provider.toUpperCase()} belum disetel. Silakan atur API Key di Pengaturan AI Dashboard Admin.`);
+>>>>>>> 8934a9a (Update project Sekolah MA)
   }
 
   const knowledgeBaseText = await getFormattedKnowledgeBase();
@@ -271,6 +413,7 @@ PRIORITAS ACTION & Knowledge Base
 4. Selain itu → Knowledge Base
 =========================================================`;
 
+<<<<<<< HEAD
   // Format messages for Groq API (OpenAI format)
   const messages = [
     { role: 'system', content: systemPrompt }
@@ -323,18 +466,146 @@ PRIORITAS ACTION & Knowledge Base
       if (cleaned) {
         text = cleaned;
       }
+=======
+  // 1. PROVIDER GOOGLE GEMINI
+  if (provider === 'gemini') {
+    const cleanModel = model.replace(/^models\//, '');
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
+
+    const contents = [];
+    
+    // History
+    if (Array.isArray(history) && history.length > 0) {
+      history.forEach((h) => {
+        const u = (h.user || h.userMessage || '').trim();
+        const a = (h.ai || h.aiResponse || h.response || '').trim();
+        if (u) contents.push({ role: 'user', parts: [{ text: u }] });
+        if (a) contents.push({ role: 'model', parts: [{ text: a }] });
+      });
     }
 
+    contents.push({
+      role: 'user',
+      parts: [{ text: message.trim() }]
+    });
+
+    try {
+      const response = await axios.post(
+        geminiUrl,
+        {
+          contents,
+          systemInstruction: {
+            parts: [{ text: systemPrompt }]
+          },
+          generationConfig: {
+            temperature: settings?.temperature ?? 0.5,
+            maxOutputTokens: settings?.max_tokens ?? 1000
+          }
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 25000
+        }
+      );
+
+      let text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (text.includes('<think>')) {
+        text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      }
+
+      if (text && text.trim().length > 0) {
+        return text.trim();
+      }
+      throw new Error('Respons dari Gemini kosong');
+    } catch (err) {
+      const status = err.response?.status;
+      const errorMsg = err.response?.data?.error?.message || err.message;
+      console.error(`Gemini API error (status ${status}):`, errorMsg);
+      throw new Error(`Gemini AI Error (${status || 500}): ${errorMsg}`);
+>>>>>>> 8934a9a (Update project Sekolah MA)
+    }
+
+<<<<<<< HEAD
+=======
+  // 2. OPENAI-COMPATIBLE PROVIDERS (Groq, OpenAI, OpenRouter)
+  let endpoint = 'https://api.groq.com/openai/v1/chat/completions';
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
+  };
+
+  if (provider === 'openai') {
+    endpoint = 'https://api.openai.com/v1/chat/completions';
+  } else if (provider === 'openrouter') {
+    endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+    headers['HTTP-Referer'] = 'https://madrasah.id';
+    headers['X-Title'] = 'SPMB MA Chatbot';
+  } else {
+    // Default Groq
+    endpoint = 'https://api.groq.com/openai/v1/chat/completions';
+  }
+
+  const messages = [
+    { role: 'system', content: systemPrompt }
+  ];
+
+  if (Array.isArray(history) && history.length > 0) {
+    history.forEach((h) => {
+      const userText = (h.user || h.userMessage || '').trim();
+      const aiText = (h.ai || h.aiResponse || h.response || '').trim();
+      if (userText) messages.push({ role: 'user', content: userText });
+      if (aiText) messages.push({ role: 'assistant', content: aiText });
+    });
+  }
+
+  messages.push({
+    role: 'user',
+    content: String(message).trim()
+  });
+
+  try {
+    const response = await axios.post(
+      endpoint,
+      {
+        model,
+        messages,
+        temperature: settings?.temperature ?? 0.5,
+        max_tokens: settings?.max_tokens ?? 1000
+      },
+      {
+        headers,
+        timeout: 25000
+      }
+    );
+
+    let text = response.data?.choices?.[0]?.message?.content || '';
+
+    // Bersihkan tag reasoning jika ada
+    if (text.includes('<think>')) {
+      const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      if (cleaned) text = cleaned;
+    }
+
+>>>>>>> 8934a9a (Update project Sekolah MA)
     if (text && text.trim().length > 0) {
       return text.trim();
     }
 
+<<<<<<< HEAD
     throw new Error('Respons dari Groq AI kosong');
   } catch (err) {
     const status = err.response?.status;
     const errorMsg = err.response?.data?.error?.message || err.message;
     console.error(`Groq API error with model ${model} (status ${status}):`, errorMsg);
     throw new Error(`Groq AI Error: ${errorMsg}`);
+=======
+    throw new Error(`Respons dari ${provider.toUpperCase()} kosong`);
+  } catch (err) {
+    const status = err.response?.status;
+    const errorMsg = err.response?.data?.error?.message || err.message;
+    console.error(`${provider.toUpperCase()} API error with model ${model} (status ${status}):`, errorMsg);
+    throw new Error(`${provider.toUpperCase()} Error (${status || 500}): ${errorMsg}`);
+>>>>>>> 8934a9a (Update project Sekolah MA)
   }
 };
 
@@ -390,7 +661,6 @@ export const calculateDistanceFromGPS = async (req, res) => {
   try {
     const { userLat, userLon, accuracy } = req.body;
 
-    // Validasi keberadaan koordinat
     if (userLat === undefined || userLat === null || userLon === undefined || userLon === null) {
       return errorResponse(res, 'Koordinat lokasi pengguna tidak tersedia', ERROR_CODES.VALIDATION_ERROR);
     }
@@ -398,19 +668,16 @@ export const calculateDistanceFromGPS = async (req, res) => {
     const lat = parseFloat(userLat);
     const lon = parseFloat(userLon);
 
-    // Validasi range koordinat geografis
     if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
       return errorResponse(res, 'Koordinat GPS tidak valid', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    // Koordinat sekolah (dapat dikonfigurasi via environment variable)
     const schoolLat = parseFloat(process.env.SCHOOL_LAT) || -6.8133266;
     const schoolLon = parseFloat(process.env.SCHOOL_LON) || 108.6177609;
     const schoolName = process.env.SCHOOL_NAME || 'MA Bina Cendekia';
     const schoolAddress = process.env.SCHOOL_ADDRESS || 'Jl. Raya Madrasah No. 123, Jawa Barat';
 
-    // Hitung jarak garis lurus (Haversine) sebagai referensi tambahan
-    const R = 6371; // radius bumi dalam km
+    const R = 6371; // km
     const dLat = (schoolLat - lat) * Math.PI / 180;
     const dLon = (schoolLon - lon) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -418,8 +685,6 @@ export const calculateDistanceFromGPS = async (req, res) => {
       Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const straightLineKm = parseFloat((R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(2));
 
-    // Hitung rute perjalanan tercepat via OSRM (Profil Driving/Mobil)
-    // Gunakan daftar endpoint dengan fallback untuk keandalan maksimal
     const osrmEndpoints = [
       `https://router.project-osrm.org/route/v1/driving/${lon},${lat};${schoolLon},${schoolLat}?overview=full&geometries=geojson&alternatives=true`,
       `https://routing.openstreetmap.de/routed-car/route/v1/driving/${lon},${lat};${schoolLon},${schoolLat}?overview=full&geometries=geojson&alternatives=true`
@@ -437,11 +702,9 @@ export const calculateDistanceFromGPS = async (req, res) => {
         });
 
         if (routeRes.data && routeRes.data.code === 'Ok' && Array.isArray(routeRes.data.routes) && routeRes.data.routes.length > 0) {
-          // Urutkan rute berdasarkan durasi tercepat
           const sortedRoutes = [...routeRes.data.routes].sort((r1, r2) => r1.duration - r2.duration);
           const fastestRoute = sortedRoutes[0];
 
-          // Format durasi ke format menit atau jam yang informatif
           const totalMinutes = Math.round(fastestRoute.duration / 60);
           let durationFormatted = `${totalMinutes} menit`;
           if (totalMinutes >= 60) {
@@ -450,7 +713,6 @@ export const calculateDistanceFromGPS = async (req, res) => {
             durationFormatted = remainingMins > 0 ? `${hours} jam ${remainingMins} menit` : `${hours} jam`;
           }
 
-          // Cek rute alternatif jika tersedia
           const alternatives = sortedRoutes.slice(1).map((alt) => ({
             distanceKm: parseFloat((alt.distance / 1000).toFixed(1)),
             durationMinutes: Math.round(alt.duration / 60),
@@ -470,8 +732,6 @@ export const calculateDistanceFromGPS = async (req, res) => {
             mapsUrl: `https://www.google.com/maps/dir/?api=1&origin=${lat},${lon}&destination=${schoolLat},${schoolLon}`,
             alternatives
           };
-
-          // Berhasil mengambil rute dari endpoint, hentikan iterasi endpoint fallback
           break;
         }
       } catch (err) {
@@ -480,8 +740,8 @@ export const calculateDistanceFromGPS = async (req, res) => {
     }
 
     successResponse(res, {
-      route: routeData, // null jika layanan routing gagal / rute jalan tidak ditemukan
-      straightLineKm,   // estimasi garis lurus sebagai data pelengkap/fallback
+      route: routeData,
+      straightLineKm,
       school: {
         name: schoolName,
         address: schoolAddress,
