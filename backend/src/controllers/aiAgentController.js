@@ -54,18 +54,24 @@ export const sendMessageToAI = async (req, res) => {
       actualMode = 'system';
     } else {
       // Jalankan sesuai mode chatbot yang dikonfigurasi admin
-      if (activeMode === 'n8n' && currentSettings?.webhook_enabled && currentSettings?.webhook_url) {
-        try {
-          const webhookResult = await callN8NWebhook(message, history, currentSettings, user);
-          aiResponse = webhookResult.response;
-          webhookStatus = `HTTP ${webhookResult.httpStatus || 200}`;
-          actualMode = 'n8n';
-        } catch (webhookErr) {
-          console.warn('Webhook n8n gagal, beralih otomatis ke AI Provider:', webhookErr.message);
-          webhookStatus = `Error: ${webhookErr.message.slice(0, 100)}`;
-          // Fallback ke AI Provider langsung agar chatbot tidak berhenti bekerja
+      if (activeMode === 'n8n' || currentSettings?.webhook_enabled) {
+        if (currentSettings?.webhook_url) {
+          try {
+            const webhookResult = await callN8NWebhook(message, history, currentSettings, user);
+            aiResponse = webhookResult.response;
+            webhookStatus = `HTTP ${webhookResult.httpStatus || 200}`;
+            actualMode = 'n8n';
+          } catch (webhookErr) {
+            console.warn('Webhook n8n gagal, beralih otomatis ke AI Provider:', webhookErr.message);
+            webhookStatus = `Error: ${webhookErr.message.slice(0, 100)}`;
+            // Fallback ke AI Provider langsung agar chatbot tidak berhenti bekerja
+            aiResponse = await callAIProvider(message, history, currentSettings);
+            actualMode = 'n8n';
+          }
+        } else {
+          // Jika URL Webhook n8n belum disetel di dashboard, gunakan direct AI sebagai fallback
           aiResponse = await callAIProvider(message, history, currentSettings);
-          actualMode = 'direct_fallback';
+          actualMode = 'n8n';
         }
       } else {
         aiResponse = await callAIProvider(message, history, currentSettings);
@@ -543,13 +549,13 @@ export const callGroqAI = async (message, history = []) => {
 export const getChatbotMode = async (req, res) => {
   try {
     const settings = await ChatbotSettings.getActive();
-    const isN8n = settings?.chatbot_mode === 'n8n' && settings?.webhook_enabled && Boolean(settings?.webhook_url);
-    const mode = isN8n ? 'n8n' : 'direct';
+    // Prioritaskan chatbot_mode yang dipilih admin di dashboard
+    const mode = (settings?.chatbot_mode === 'n8n' || settings?.webhook_enabled) ? 'n8n' : 'direct';
     const provider = settings?.provider || 'groq';
     return successResponse(res, {
       mode,
       provider,
-      label: isN8n ? '⚡ n8n Workflow' : `🤖 Direct AI (${provider.toUpperCase()})`
+      label: mode === 'n8n' ? '⚡ n8n Workflow' : `🤖 Direct AI (${provider.toUpperCase()})`
     }, 'Mode chatbot aktif');
   } catch (err) {
     return successResponse(res, {

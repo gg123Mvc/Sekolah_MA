@@ -286,7 +286,10 @@ const ChatbotSettingsTab = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* MODE 1: DIRECT */}
           <div
-            onClick={() => setChatbotMode('direct')}
+            onClick={() => {
+              setChatbotMode('direct');
+              setWebhookEnabled(false);
+            }}
             className={`cursor-pointer rounded-2xl p-6 border-2 transition-all relative ${
               chatbotMode === 'direct'
                 ? 'border-emerald-600 bg-emerald-50/40 shadow-md shadow-emerald-900/5'
@@ -312,7 +315,10 @@ const ChatbotSettingsTab = () => {
 
           {/* MODE 2: N8N */}
           <div
-            onClick={() => setChatbotMode('n8n')}
+            onClick={() => {
+              setChatbotMode('n8n');
+              setWebhookEnabled(true);
+            }}
             className={`cursor-pointer rounded-2xl p-6 border-2 transition-all relative ${
               chatbotMode === 'n8n'
                 ? 'border-emerald-600 bg-emerald-50/40 shadow-md shadow-emerald-900/5'
