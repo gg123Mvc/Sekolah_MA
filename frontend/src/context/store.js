@@ -138,9 +138,42 @@ export const useDashboardStore = create((set) => ({
   setLoading: (loading) => set(() => ({ loading })),
 }));
 
+export const WELCOME_MESSAGE = {
+  id: 'welcome-msg',
+  aiResponse: `👋 **Selamat Datang di MAIRA AI**
+
+**Madrasah AI Response Assistant**
+
+**MA Bina Cendekia**
+
+Saya siap membantu Anda terkait layanan Sistem Penerimaan Murid Baru (SPMB).
+
+Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
+
+🔹 Apa saja syarat pendaftaran?
+
+🔹 Berapa biaya sekolah?
+
+🔹 Bagaimana cara daftar?
+
+🔹 Saya tidak bisa upload rapor.
+
+🔹 Website error saat login.
+
+🔹 Cek kelulusan. (Masukan Nomor Registrasi Anda, Contoh: REG202600123)
+
+🔹 Cek tiket pengaduan. (Masukan Nomor Tiket Pengaduan Anda, Contoh: CMP-20260710-00015)
+
+📍 **Cek Jarak ke Sekolah** — Gunakan tombol **Cek Jarak** di halaman ini untuk menghitung jarak dari lokasi GPS Anda ke sekolah secara akurat.
+
+💡 Anda tidak perlu menggunakan format khusus. Cukup ketik pertanyaan atau permasalahan Anda, dan MAIRA AI akan membantu memprosesnya secara otomatis.`,
+  timestamp: new Date().toISOString(),
+  isWelcomeMessage: true
+};
+
 // AI Agent Store
 export const useAIAgentStore = create((set) => ({
-  chatHistory: [],
+  chatHistory: [WELCOME_MESSAGE],
   loading: false,
 
   addMessage: (userMessage, aiResponse, timestamp, responseTimeMs) =>
@@ -191,5 +224,5 @@ export const useAIAgentStore = create((set) => ({
   setChatHistory: (history) => set(() => ({ chatHistory: history })),
   setLoading: (loading) => set(() => ({ loading })),
 
-  clearChat: () => set(() => ({ chatHistory: [] })),
+  clearChat: () => set(() => ({ chatHistory: [WELCOME_MESSAGE] })),
 }));

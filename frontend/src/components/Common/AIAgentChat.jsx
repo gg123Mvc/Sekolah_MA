@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { FiX, FiSend, FiTrash2, FiMaximize2, FiMinimize2 } from 'react-icons/fi';
 import { FaRobot, FaUser } from 'react-icons/fa';
-import { useAIAgentStore } from '../../context/store';
+import { useAIAgentStore, WELCOME_MESSAGE } from '../../context/store';
 import { aiAgentAPI } from '../../utils/api';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -54,45 +54,19 @@ const AIAgentChat = () => {
         }
 
         const response = await aiAgentAPI.getHistory();
-        if (response.data.success) {
-          if (response.data.data.length === 0) {
-            setChatHistory([{
-              aiResponse: `👋 **Selamat Datang di MAIRA AI**
-
-**Madrasah AI Response Assistant**
-
-**MA Bina Cendekia**
-
-Saya siap membantu Anda terkait layanan Sistem Penerimaan Murid Baru (SPMB).
-
-Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
-
-🔹 Apa saja syarat pendaftaran?
-
-🔹 Berapa biaya sekolah?
-
-🔹 Bagaimana cara daftar?
-
-🔹 Saya tidak bisa upload rapor.
-
-🔹 Website error saat login.
-
-🔹 Cek kelulusan. (Masukan Nomor Registrasi Anda, Contoh: REG202600123)
-
-🔹 Cek tiket pengaduan. (Masukan Nomor Tiket Pengaduan Anda, Contoh: CMP-20260710-00015)
-
-📍 **Cek Jarak ke Sekolah** — Gunakan tombol **Cek Jarak** di halaman ini untuk menghitung jarak dari lokasi GPS Anda ke sekolah secara akurat.
-
-💡 Anda tidak perlu menggunakan format khusus. Cukup ketik pertanyaan atau permasalahan Anda, dan MAIRA AI akan membantu memprosesnya secara otomatis.`,
-              timestamp: new Date().toISOString(),
-              isWelcomeMessage: true
-            }]);
+        if (response.data && response.data.success) {
+          const remoteData = Array.isArray(response.data.data) ? response.data.data : [];
+          if (remoteData.length > 0) {
+            setChatHistory([WELCOME_MESSAGE, ...remoteData]);
           } else {
-            setChatHistory(response.data.data);
+            setChatHistory([WELCOME_MESSAGE]);
           }
+        } else {
+          setChatHistory([WELCOME_MESSAGE]);
         }
       } catch (error) {
         console.error('Error loading chat history:', error);
+        setChatHistory([WELCOME_MESSAGE]);
       }
     };
 
@@ -185,41 +159,11 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
 
     try {
       await aiAgentAPI.clearHistory();
-      setChatHistory([{
-        aiResponse: `👋 **Selamat Datang di MAIRA AI**
-
-**Madrasah AI Response Assistant**
-
-**MA Bina Cendekia**
-
-Saya siap membantu Anda terkait layanan Sistem Penerimaan Murid Baru (SPMB).
-
-Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
-
-🔹 Apa saja syarat pendaftaran?
-
-🔹 Berapa biaya sekolah?
-
-🔹 Bagaimana cara daftar?
-
-🔹 Saya tidak bisa upload rapor.
-
-🔹 Website error saat login.
-
-🔹 Cek kelulusan. (Masukan Nomor Registrasi Anda, Contoh: REG202600123)
-
-🔹 Cek tiket pengaduan. (Masukan Nomor Tiket Pengaduan Anda, Contoh: CMP-20260710-00015)
-
-📍 **Cek Jarak ke Sekolah** — Gunakan tombol **Cek Jarak** di halaman ini untuk menghitung jarak dari lokasi GPS Anda ke sekolah secara akurat.
-
-💡 Anda tidak perlu menggunakan format khusus. Cukup ketik pertanyaan atau permasalahan Anda, dan MAIRA AI akan membantu memprosesnya secara otomatis.`,
-        timestamp: new Date().toISOString(),
-        isWelcomeMessage: true
-      }]);
-      toast.success('Chat berhasil dihapus');
     } catch (error) {
-      toast.error('Gagal menghapus chat');
+      console.warn('Gagal menghapus riwayat di server:', error);
     }
+    setChatHistory([WELCOME_MESSAGE]);
+    toast.success('Chat berhasil dibersihkan');
   };
 
   return (
@@ -285,24 +229,26 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
                 {chatHistory.map((chat, index) => (
                   <div key={index} className="space-y-2">
                     {/* User Message */}
-                    <div className="flex justify-end items-start gap-1.5">
-                      <div className="flex flex-col items-end gap-1 max-w-[85%] md:max-w-[75%]">
-                        <div className="bg-primary-600 text-white rounded-lg rounded-tr-none px-2.5 py-1 shadow-sm min-w-[60px]">
-                          <p className="text-[12px] leading-tight">{chat.userMessage || chat.message}</p>
-                          <div className="flex justify-end items-center gap-1 mt-0.5 -mb-0.5">
-                            <span className="text-[8px] text-primary-200 opacity-90">
-                              {formatTime(chat.timestamp || chat.created_at)}
-                            </span>
-                            <span className={`text-[10px] leading-none ${chat.aiResponse || chat.response ? 'text-cyan-300' : 'text-gray-300'}`}>
-                              ✓✓
-                            </span>
+                    {(chat.userMessage || chat.message) && (
+                      <div className="flex justify-end items-start gap-1.5">
+                        <div className="flex flex-col items-end gap-1 max-w-[85%] md:max-w-[75%]">
+                          <div className="bg-primary-600 text-white rounded-lg rounded-tr-none px-2.5 py-1 shadow-sm min-w-[60px]">
+                            <p className="text-[12px] leading-tight">{chat.userMessage || chat.message}</p>
+                            <div className="flex justify-end items-center gap-1 mt-0.5 -mb-0.5">
+                              <span className="text-[8px] text-primary-200 opacity-90">
+                                {formatTime(chat.timestamp || chat.created_at)}
+                              </span>
+                              <span className={`text-[10px] leading-none ${chat.aiResponse || chat.response ? 'text-cyan-300' : 'text-gray-300'}`}>
+                                ✓✓
+                              </span>
+                            </div>
                           </div>
                         </div>
+                        <div className="w-6 h-6 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 border border-primary-200 mt-0.5">
+                          <FaUser className="w-3 h-3 text-primary-600" />
+                        </div>
                       </div>
-                      <div className="w-6 h-6 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 border border-primary-200 mt-0.5">
-                        <FaUser className="w-3 h-3 text-primary-600" />
-                      </div>
-                    </div>
+                    )}
 
                     {/* AI Response or Typing Indicator */}
                     {chat.aiResponse || chat.response ? (
