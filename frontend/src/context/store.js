@@ -170,11 +170,20 @@ export const useAIAgentStore = create((set) => ({
       ],
     })),
 
-  updateMessageResponse: (id, aiResponse, timestamp, responseTimeMs) =>
+  updateMessageResponse: (id, aiResponse, timestamp, responseTimeMs, meta = {}) =>
     set((state) => ({
       chatHistory: state.chatHistory.map((chat) =>
         chat.id === id
-          ? { ...chat, aiResponse, timestamp: timestamp || chat.timestamp, responseTimeMs }
+          ? { 
+              ...chat, 
+              aiResponse, 
+              timestamp: timestamp || chat.timestamp, 
+              responseTimeMs,
+              mode: meta?.mode,
+              provider: meta?.provider,
+              model: meta?.model,
+              sourceLabel: meta?.source_label
+            }
           : chat
       ),
     })),

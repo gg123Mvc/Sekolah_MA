@@ -12,6 +12,7 @@ const AIAgentChat = () => {
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [currentMode, setCurrentMode] = useState(null);
   const { chatHistory, addMessage, setChatHistory, setLoading: setAILoading, clearChat, addUserMessageOnly, updateMessageResponse } = useAIAgentStore();
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -42,6 +43,16 @@ const AIAgentChat = () => {
   useEffect(() => {
     const loadHistory = async () => {
       try {
+        // Ambil mode chatbot aktif dari server
+        try {
+          const modeRes = await aiAgentAPI.getMode();
+          if (modeRes.data?.success) {
+            setCurrentMode(modeRes.data.data.mode);
+          }
+        } catch (mErr) {
+          // ignore
+        }
+
         const response = await aiAgentAPI.getHistory();
         if (response.data.success) {
           if (response.data.data.length === 0) {
@@ -131,8 +142,18 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
         const aiResponse = response.data.data.ai_response;
         const timestamp = response.data.data.timestamp;
         const responseTimeMs = response.data.data.response_time_ms;
+        const mode = response.data.data.mode;
+        const provider = response.data.data.provider;
+        const model = response.data.data.model;
+        const sourceLabel = response.data.data.source_label;
         
-        updateMessageResponse(tempId, aiResponse, timestamp, responseTimeMs);
+        setCurrentMode(mode);
+        updateMessageResponse(tempId, aiResponse, timestamp, responseTimeMs, {
+          mode,
+          provider,
+          model,
+          source_label: sourceLabel
+        });
         
         if (inputRef.current) {
           inputRef.current.focus();
@@ -223,10 +244,21 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
       {isOpen && (
         <div className={`fixed bg-white shadow-2xl flex flex-col animate-slideInUp z-[60] border-t-4 border-primary-600 transition-all duration-300 ${isFullScreen ? 'inset-0 w-full h-full rounded-none' : 'bottom-24 right-4 sm:right-6 w-[calc(100vw-2rem)] sm:w-96 h-[70vh] min-h-[400px] max-h-[600px] rounded-lg overflow-hidden'}`}>
           {/* Header */}
-          <div className="bg-gradient-to-r from-primary-600 to-secondary-600 text-white px-6 py-4 rounded-t-lg flex justify-between items-center shrink-0">
+          <div className="bg-gradient-to-r from-primary-600 to-secondary-600 text-white px-5 py-3.5 rounded-t-lg flex justify-between items-center shrink-0">
             <div>
-              <h3 className="font-bold text-lg">MAIRA AI 🤖</h3>
-              <p className="text-xs opacity-90">Madrasah AI Response Assistant</p>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-base">MAIRA AI 🤖</h3>
+                {currentMode && (
+                  <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
+                    currentMode === 'n8n' 
+                      ? 'bg-teal-300 text-teal-950 shadow-sm' 
+                      : 'bg-emerald-300 text-emerald-950 shadow-sm'
+                  }`}>
+                    {currentMode === 'n8n' ? '⚡ n8n' : '🤖 Direct'}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] opacity-90">Madrasah AI Response Assistant</p>
             </div>
             <div className="flex gap-1">
               <button
@@ -279,7 +311,15 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
                           <FaRobot className="w-3 h-3 text-primary-600" />
                         </div>
                         <div className="flex flex-col items-start gap-1 max-w-[85%] md:max-w-[85%]">
-                          <div className="bg-white text-gray-800 border border-gray-200 rounded-lg rounded-tl-none px-3 py-2 shadow-sm min-w-[60px] max-w-full overflow-hidden">
+                          <div className={`bg-white text-gray-800 border rounded-lg rounded-tl-none px-3 py-2 shadow-sm min-w-[60px] max-w-full overflow-hidden ${
+                            chat.mode === 'n8n'
+                              ? 'border-gray-200 border-l-4 border-l-teal-500'
+                              : chat.mode === 'system'
+                                ? 'border-gray-200 border-l-4 border-l-blue-500'
+                                : chat.mode === 'direct_fallback'
+                                  ? 'border-gray-200 border-l-4 border-l-amber-500'
+                                  : 'border-gray-200 border-l-4 border-l-emerald-500'
+                          }`}>
                             <div className="text-[12px] leading-relaxed markdown-content">
                               <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                                 {chat.aiResponse || chat.response || ''}
@@ -291,9 +331,10 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
                               </span>
                             </div>
                           </div>
+                          
                           {(chat.responseTimeMs || chat.response_time_ms) && (
-                            <div className="flex gap-2 items-center text-[8px] text-gray-400 ml-1">
-                              <span className="bg-gray-100 px-1 py-0.5 rounded text-gray-500">
+                            <div className="flex gap-2 items-center text-[8px] text-gray-400 ml-1 mt-0.5">
+                              <span className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 font-mono text-[8px]">
                                 ⏱️ {formatResponseTime(chat.responseTimeMs || chat.response_time_ms)}
                               </span>
                             </div>

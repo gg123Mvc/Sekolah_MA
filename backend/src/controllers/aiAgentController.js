@@ -30,6 +30,7 @@ export const sendMessageToAI = async (req, res) => {
     activeMode = currentSettings?.chatbot_mode || 'direct';
 
     let aiResponse = "";
+    let actualMode = 'direct';
     
     // Interceptor: Deteksi otomatis nomor registrasi atau tiket untuk mempercepat respon 
     const msgUpper = message.trim().toUpperCase();
@@ -41,12 +42,16 @@ export const sendMessageToAI = async (req, res) => {
 
     if (ticketMatch) {
       aiResponse = JSON.stringify({ action: 'check_ticket', ticket_number: ticketMatch[1] });
+      actualMode = 'system';
     } else if (gradMatch) {
       aiResponse = JSON.stringify({ action: 'check_graduation', registration_number: gradMatch[1] });
+      actualMode = 'system';
     } else if (askTicket) {
       aiResponse = "Silakan masukkan Nomor Tiket Pengaduan Anda.\n\nContoh:\nCMP-20260710-00015";
+      actualMode = 'system';
     } else if (askGrad) {
       aiResponse = "Silakan masukkan Nomor Registrasi Anda.\n\nContoh:\nSPMB-2026-003";
+      actualMode = 'system';
     } else {
       // Jalankan sesuai mode chatbot yang dikonfigurasi admin
       if (activeMode === 'n8n' && currentSettings?.webhook_enabled && currentSettings?.webhook_url) {
@@ -54,14 +59,17 @@ export const sendMessageToAI = async (req, res) => {
           const webhookResult = await callN8NWebhook(message, history, currentSettings, user);
           aiResponse = webhookResult.response;
           webhookStatus = `HTTP ${webhookResult.httpStatus || 200}`;
+          actualMode = 'n8n';
         } catch (webhookErr) {
           console.warn('Webhook n8n gagal, beralih otomatis ke AI Provider:', webhookErr.message);
           webhookStatus = `Error: ${webhookErr.message.slice(0, 100)}`;
           // Fallback ke AI Provider langsung agar chatbot tidak berhenti bekerja
           aiResponse = await callAIProvider(message, history, currentSettings);
+          actualMode = 'direct_fallback';
         }
       } else {
         aiResponse = await callAIProvider(message, history, currentSettings);
+        actualMode = 'direct';
       }
     }
 
@@ -183,6 +191,7 @@ export const sendMessageToAI = async (req, res) => {
         } else if (actionData.action === 'check_route') {
           aiResponse = "📍 **Cek Jarak ke Sekolah**\n\nUntuk menghitung jarak dari lokasi Anda ke sekolah, silakan gunakan fitur **Cek Jarak** yang tersedia di halaman ini.\n\nFitur tersebut akan meminta izin akses lokasi GPS perangkat Anda untuk menentukan titik awal secara akurat.\n\nJarak dan estimasi waktu perjalanan akan dihitung secara otomatis setelah izin diberikan.";
         }
+        actualMode = 'system';
       } catch(e) {
         // Not a valid JSON or not our action format, just continue with original response
       }
@@ -203,6 +212,17 @@ export const sendMessageToAI = async (req, res) => {
       if (historyError) console.error('Failed to save chat history:', historyError.message);
     }
 
+    let sourceLabel = '';
+    if (actualMode === 'n8n') {
+      sourceLabel = 'Workflow n8n';
+    } else if (actualMode === 'direct_fallback') {
+      sourceLabel = `Direct AI (${activeProvider.toUpperCase()}) - Fallback`;
+    } else if (actualMode === 'system') {
+      sourceLabel = 'Sistem SPMB';
+    } else {
+      sourceLabel = `Direct AI (${activeProvider.toUpperCase()})`;
+    }
+
     successResponse(res, {
       user_message: message,
       ai_response: aiResponse,
@@ -210,7 +230,8 @@ export const sendMessageToAI = async (req, res) => {
       response_time_ms: responseTimeMs,
       provider: activeProvider,
       model: activeModel,
-      mode: activeMode
+      mode: actualMode,
+      source_label: sourceLabel
     }, 'Pesan berhasil diproses');
 
   } catch (error) {
@@ -516,6 +537,27 @@ PRIORITAS ACTION & Knowledge Base
 // Fallback Groq API function untuk kompatibilitas
 export const callGroqAI = async (message, history = []) => {
   return callAIProvider(message, history, { provider: 'groq' });
+};
+
+// Get Active Chatbot Mode (Public untuk tampilan indikator status chat)
+export const getChatbotMode = async (req, res) => {
+  try {
+    const settings = await ChatbotSettings.getActive();
+    const isN8n = settings?.chatbot_mode === 'n8n' && settings?.webhook_enabled && Boolean(settings?.webhook_url);
+    const mode = isN8n ? 'n8n' : 'direct';
+    const provider = settings?.provider || 'groq';
+    return successResponse(res, {
+      mode,
+      provider,
+      label: isN8n ? '⚡ n8n Workflow' : `🤖 Direct AI (${provider.toUpperCase()})`
+    }, 'Mode chatbot aktif');
+  } catch (err) {
+    return successResponse(res, {
+      mode: 'direct',
+      provider: 'groq',
+      label: '🤖 Direct AI (GROQ)'
+    }, 'Default mode');
+  }
 };
 
 // Get Chat History

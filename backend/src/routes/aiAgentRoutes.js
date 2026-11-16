@@ -5,6 +5,7 @@ import { authenticateToken, optionalAuthenticateToken } from '../middleware/auth
 const router = express.Router();
 
 // Routes (Optional Auth for public access)
+router.get('/mode', aiAgentController.getChatbotMode);
 router.post('/message', optionalAuthenticateToken, aiAgentController.sendMessageToAI);
 router.get('/history', optionalAuthenticateToken, aiAgentController.getChatHistory);
 router.delete('/history', optionalAuthenticateToken, aiAgentController.clearChatHistory);

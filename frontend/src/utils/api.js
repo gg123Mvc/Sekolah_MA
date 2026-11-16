@@ -62,6 +62,7 @@ export const documentAPI = {
 
 // AI Agent API
 export const aiAgentAPI = {
+  getMode: () => api.get('/ai-agent/mode'),
   sendMessage: (message, history) => api.post('/ai-agent/message', { message, history }),
   getHistory: () => api.get('/ai-agent/history'),
   clearHistory: () => api.delete('/ai-agent/history'),
