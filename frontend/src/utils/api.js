@@ -106,12 +106,11 @@ export const adminAPI = {
   updateComplaintStatus: (id, data) => api.put(`/admin/complaints/${id}/status`, data),
   deleteComplaint: (id) => api.delete(`/admin/complaints/${id}`),
 
-  // Chatbot Settings & Monitoring API
+  // Chatbot Settings API
   getChatbotSettings: () => api.get('/admin/chatbot-settings'),
   updateChatbotSettings: (data) => api.put('/admin/chatbot-settings', data),
   testAIConnection: (data) => api.post('/admin/chatbot-settings/test-ai', data),
   testWebhookConnection: (data) => api.post('/admin/chatbot-settings/test-webhook', data),
-  getChatbotLogs: (params) => api.get('/admin/chatbot-settings/logs', { params }),
 };
 
 export default api;

@@ -23,7 +23,7 @@ export const sendMessageToAI = async (req, res) => {
       return errorResponse(res, 'Pesan tidak boleh kosong', ERROR_CODES.VALIDATION_ERROR);
     }
 
-    // Ambil konfigurasi dinamis dari database
+    // Ambil konfigurasi dinamis dari database (jika ada)
     currentSettings = await ChatbotSettings.getActive();
     activeProvider = currentSettings?.provider || 'groq';
     activeModel = currentSettings?.model || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
@@ -48,9 +48,6 @@ export const sendMessageToAI = async (req, res) => {
     } else if (askGrad) {
       aiResponse = "Silakan masukkan Nomor Registrasi Anda.\n\nContoh:\nSPMB-2026-003";
     } else {
-<<<<<<< HEAD
-      aiResponse = await callGroqAI(message, history);
-=======
       // Jalankan sesuai mode chatbot yang dikonfigurasi admin
       if (activeMode === 'n8n' && currentSettings?.webhook_enabled && currentSettings?.webhook_url) {
         try {
@@ -66,7 +63,6 @@ export const sendMessageToAI = async (req, res) => {
       } else {
         aiResponse = await callAIProvider(message, history, currentSettings);
       }
->>>>>>> 8934a9a (Update project Sekolah MA)
     }
 
     // Check for JSON action from AI
@@ -207,19 +203,6 @@ export const sendMessageToAI = async (req, res) => {
       if (historyError) console.error('Failed to save chat history:', historyError.message);
     }
 
-    // Catat ke log monitoring admin (chatbot_logs)
-    await ChatbotSettings.addLog({
-      user_id: user?.userId || null,
-      question: message,
-      provider: activeProvider,
-      model: activeModel,
-      chatbot_mode: activeMode,
-      status: 'success',
-      response_time_ms: responseTimeMs,
-      webhook_status: webhookStatus,
-      error_message: null
-    });
-
     successResponse(res, {
       user_message: message,
       ai_response: aiResponse,
@@ -236,30 +219,10 @@ export const sendMessageToAI = async (req, res) => {
     const status = error?.response?.status || 500;
     const errorMessage = error?.response?.data?.error?.message || error?.response?.data?.message || error.message || 'Gagal memproses pesan';
 
-    // Catat kegagalan ke log monitoring admin
-    await ChatbotSettings.addLog({
-      user_id: req.user?.userId || null,
-      question: req.body?.message || '',
-      provider: activeProvider,
-      model: activeModel,
-      chatbot_mode: activeMode,
-      status: 'error',
-      response_time_ms: responseTimeMs,
-      webhook_status: webhookStatus,
-      error_message: `Status ${status}: ${errorMessage}`
-    });
-
     errorResponse(res, `Gagal memproses pesan (Status ${status}): ${errorMessage}`, ERROR_CODES.INTERNAL_ERROR);
   }
 };
 
-<<<<<<< HEAD
-// Call Groq API (OpenAI-compatible format)
-const callGroqAI = async (message, history = []) => {
-  const apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
-  if (!apiKey) {
-    throw new Error('API Key Groq tidak ditemukan dalam konfigurasi environment (.env). Pastikan GROQ_API_KEY disetel di file .env');
-=======
 /**
  * Panggil Webhook n8n (Mode 2)
  */
@@ -334,8 +297,7 @@ const callAIProvider = async (message, history = [], settings = null) => {
   }
 
   if (!apiKey) {
-    throw new Error(`API Key untuk ${provider.toUpperCase()} belum disetel. Silakan atur API Key di Pengaturan AI Dashboard Admin.`);
->>>>>>> 8934a9a (Update project Sekolah MA)
+    throw new Error(`API Key untuk ${provider.toUpperCase()} belum disetel. Silakan atur API Key di Pengaturan AI Dashboard Admin atau di file .env.`);
   }
 
   const knowledgeBaseText = await getFormattedKnowledgeBase();
@@ -399,6 +361,13 @@ Jika ada kata "cek tiket", "status pengaduan" ATAU menyebut Nomor Tiket, AI WAJI
 }
 Jika minta cek tanpa nomor tiket, minta nomornya.
 
+=========================================================
+PENGECEKAN JARAK DAN RUTE KE SEKOLAH
+=========================================================
+Jika pengguna bertanya tentang jarak, rute, atau lokasi ke sekolah (misal: "berapa jarak ke sekolah?", "cek jarak saya ke sekolah", "rute dari tempat saya ke sekolah"), AI WAJIB merespons dengan teks panduan berikut:
+
+"📍 Untuk mengecek jarak dari lokasi Anda ke sekolah, silakan gunakan fitur **Cek Jarak** yang tersedia di halaman ini. Fitur tersebut menggunakan GPS perangkat Anda untuk menentukan lokasi secara akurat, lalu menghitung jarak dan estimasi waktu perjalanan ke MA Bina Cendekia secara otomatis. Cukup klik tombol **Cek Jarak** dan berikan izin akses lokasi ketika diminta."
+
 AI DILARANG KERAS:
 - Meminta pengguna memasukkan nama desa, kecamatan, atau lokasi secara manual.
 - Mengaku sudah mengetahui lokasi pengguna sebelum GPS berhasil memperoleh koordinat.
@@ -409,64 +378,11 @@ PRIORITAS ACTION & Knowledge Base
 =========================================================
 1. No Tiket (CMP-xxxx) → check_ticket
 2. No Registrasi (SPMB-xxxx / REGxxxx) → check_graduation
-3. Pengaduan → create_complaint
-4. Selain itu → Knowledge Base
+3. Jarak/Rute → Arahkan ke fitur Cek Jarak GPS (teks panduan, BUKAN JSON)
+4. Pengaduan → create_complaint
+5. Selain itu → Knowledge Base
 =========================================================`;
 
-<<<<<<< HEAD
-  // Format messages for Groq API (OpenAI format)
-  const messages = [
-    { role: 'system', content: systemPrompt }
-  ];
-
-  if (Array.isArray(history) && history.length > 0) {
-    history.forEach((h) => {
-      const userText = (h.user || h.userMessage || '').trim();
-      const aiText = (h.ai || h.aiResponse || h.response || '').trim();
-      if (userText) {
-        messages.push({ role: 'user', content: userText });
-      }
-      if (aiText) {
-        messages.push({ role: 'assistant', content: aiText });
-      }
-    });
-  }
-
-  messages.push({
-    role: 'user',
-    content: String(message).trim()
-  });
-
-  const model = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
-  const url = 'https://api.groq.com/openai/v1/chat/completions';
-
-  try {
-    const response = await axios.post(
-      url,
-      {
-        model,
-        messages,
-        temperature: 0.5,
-        max_tokens: 1000
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        timeout: 20000
-      }
-    );
-
-    let text = response.data?.choices?.[0]?.message?.content || '';
-
-    // Remove reasoning tags if any
-    if (text.includes('<think>')) {
-      const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-      if (cleaned) {
-        text = cleaned;
-      }
-=======
   // 1. PROVIDER GOOGLE GEMINI
   if (provider === 'gemini') {
     const cleanModel = model.replace(/^models\//, '');
@@ -522,11 +438,9 @@ PRIORITAS ACTION & Knowledge Base
       const errorMsg = err.response?.data?.error?.message || err.message;
       console.error(`Gemini API error (status ${status}):`, errorMsg);
       throw new Error(`Gemini AI Error (${status || 500}): ${errorMsg}`);
->>>>>>> 8934a9a (Update project Sekolah MA)
     }
+  }
 
-<<<<<<< HEAD
-=======
   // 2. OPENAI-COMPATIBLE PROVIDERS (Groq, OpenAI, OpenRouter)
   let endpoint = 'https://api.groq.com/openai/v1/chat/completions';
   const headers = {
@@ -586,27 +500,22 @@ PRIORITAS ACTION & Knowledge Base
       if (cleaned) text = cleaned;
     }
 
->>>>>>> 8934a9a (Update project Sekolah MA)
     if (text && text.trim().length > 0) {
       return text.trim();
     }
 
-<<<<<<< HEAD
-    throw new Error('Respons dari Groq AI kosong');
-  } catch (err) {
-    const status = err.response?.status;
-    const errorMsg = err.response?.data?.error?.message || err.message;
-    console.error(`Groq API error with model ${model} (status ${status}):`, errorMsg);
-    throw new Error(`Groq AI Error: ${errorMsg}`);
-=======
     throw new Error(`Respons dari ${provider.toUpperCase()} kosong`);
   } catch (err) {
     const status = err.response?.status;
     const errorMsg = err.response?.data?.error?.message || err.message;
     console.error(`${provider.toUpperCase()} API error with model ${model} (status ${status}):`, errorMsg);
     throw new Error(`${provider.toUpperCase()} Error (${status || 500}): ${errorMsg}`);
->>>>>>> 8934a9a (Update project Sekolah MA)
   }
+};
+
+// Fallback Groq API function untuk kompatibilitas
+export const callGroqAI = async (message, history = []) => {
+  return callAIProvider(message, history, { provider: 'groq' });
 };
 
 // Get Chat History

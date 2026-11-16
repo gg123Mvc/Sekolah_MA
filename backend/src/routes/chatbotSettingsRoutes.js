@@ -16,7 +16,4 @@ router.put('/', chatbotSettingsController.updateSettings);
 router.post('/test-ai', chatbotSettingsController.testAIConnection);
 router.post('/test-webhook', chatbotSettingsController.testWebhook);
 
-// Logs & Monitoring
-router.get('/logs', chatbotSettingsController.getLogs);
-
 export default router;

@@ -143,10 +143,13 @@ Silakan ketik pertanyaan atau kebutuhan Anda, misalnya:
       toast.error(errorMsg);
       console.error('Error:', error);
       
-      // Replace the typing indicator with an error message so it doesn't get stuck
+      // Replace the typing indicator with an informative error message so it doesn't get stuck
+      const displayMsg = error.response?.data?.message 
+        ? `⚠️ ${error.response.data.message}`
+        : 'Maaf, saat ini terjadi kendala koneksi ke server AI. Silakan coba beberapa saat lagi.';
       updateMessageResponse(
         tempId, 
-        'Maaf, saat ini terjadi kendala koneksi ke server AI. Silakan coba beberapa saat lagi.', 
+        displayMsg, 
         new Date(), 
         0
       );

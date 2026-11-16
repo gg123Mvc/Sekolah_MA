@@ -345,27 +345,3 @@ export const testWebhook = async (req, res) => {
     });
   }
 };
-
-/**
- * 5. Logs & Monitoring Chatbot
- */
-export const getLogs = async (req, res) => {
-  try {
-    const { page, limit, search, dateFrom, dateTo, mode, status } = req.query;
-
-    const logsData = await ChatbotSettings.getLogs({
-      page,
-      limit,
-      search,
-      dateFrom,
-      dateTo,
-      mode,
-      status
-    });
-
-    return successResponse(res, logsData, 'Data logs chatbot berhasil diambil');
-  } catch (error) {
-    console.error('getLogs error:', error);
-    return errorResponse(res, `Gagal mengambil logs: ${error.message}`, ERROR_CODES.INTERNAL_ERROR);
-  }
-};
