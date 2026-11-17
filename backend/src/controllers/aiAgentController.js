@@ -62,16 +62,17 @@ export const sendMessageToAI = async (req, res) => {
             webhookStatus = `HTTP ${webhookResult.httpStatus || 200}`;
             actualMode = 'n8n';
           } catch (webhookErr) {
-            console.warn('Webhook n8n gagal, beralih otomatis ke AI Provider:', webhookErr.message);
+            console.error('❌ Webhook n8n gagal dipanggil, beralih ke Direct AI fallback:', webhookErr.message);
             webhookStatus = `Error: ${webhookErr.message.slice(0, 100)}`;
             // Fallback ke AI Provider langsung agar chatbot tidak berhenti bekerja
             aiResponse = await callAIProvider(message, history, currentSettings);
-            actualMode = 'n8n';
+            actualMode = 'direct_fallback';
           }
         } else {
           // Jika URL Webhook n8n belum disetel di dashboard, gunakan direct AI sebagai fallback
+          console.warn('⚠️ Mode n8n aktif tetapi URL webhook n8n belum disetel. Menggunakan Direct AI.');
           aiResponse = await callAIProvider(message, history, currentSettings);
-          actualMode = 'n8n';
+          actualMode = 'direct_fallback';
         }
       } else {
         aiResponse = await callAIProvider(message, history, currentSettings);
@@ -277,24 +278,81 @@ const callN8NWebhook = async (message, history = [], settings, user = null) => {
     }
   }
 
+  const sessionId = (user && user.userId) ? String(user.userId) : 'guest_session';
+
   const payload = {
+    // Format wajib untuk node "When chat message received" (n8n Chat Trigger)
+    action: 'sendMessage',
+    chatInput: message,
+    sessionId,
+
+    // Format umum untuk node "Webhook" biasa
     message,
+    query: message,
+    input: message,
+    text: message,
     history,
     user: user ? { id: user.userId, email: user.email, role: user.role } : null,
     timestamp: new Date().toISOString()
   };
 
-  const response = await axios.post(webhookUrl, payload, {
-    headers,
-    timeout: 25000 // 25 detik timeout
-  });
+  let response;
+  try {
+    response = await axios.post(webhookUrl, payload, {
+      headers,
+      timeout: 25000 // 25 detik timeout
+    });
+  } catch (err) {
+    // Jika n8n 404 dan URL belum diakhiri /chat (khas node "When chat message received")
+    if (err.response?.status === 404 && !webhookUrl.endsWith('/chat')) {
+      const altUrl = `${webhookUrl.replace(/\/+$/, '')}/chat`;
+      try {
+        response = await axios.post(altUrl, payload, { headers, timeout: 25000 });
+      } catch (retryErr) {
+        throw err;
+      }
+    } else {
+      throw err;
+    }
+  }
 
-  // Ekstrak teks respons n8n (bisa berupa { response }, { message }, { output }, atau string langsung)
+  // Ekstrak teks respons n8n (bisa berupa string, object { response/output/message }, atau array n8n)
   let replyText = '';
-  if (typeof response.data === 'string') {
-    replyText = response.data;
-  } else if (response.data && typeof response.data === 'object') {
-    replyText = response.data.response || response.data.message || response.data.output || response.data.text || JSON.stringify(response.data);
+  let data = response.data;
+
+  // Jika n8n mengembalikan array (khas node n8n)
+  if (Array.isArray(data) && data.length > 0) {
+    data = data[0];
+  }
+
+  // Jika n8n membungkus dalam objek json
+  if (data && typeof data === 'object' && data.json && typeof data.json === 'object') {
+    data = data.json;
+  }
+
+  if (typeof data === 'string') {
+    // Cek apakah response berupa streaming format n8n ({"type":"item","content":"..."})
+    if (data.includes('"type":"item"') || data.includes('"type": "item"') || data.includes('"type":"begin"')) {
+      let assembled = '';
+      const regex = /"type"\s*:\s*"item"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+      let match;
+      while ((match = regex.exec(data)) !== null) {
+        try {
+          assembled += JSON.parse(`"${match[1]}"`);
+        } catch {
+          assembled += match[1];
+        }
+      }
+      if (assembled.trim()) {
+        replyText = assembled.trim();
+      } else {
+        replyText = data;
+      }
+    } else {
+      replyText = data;
+    }
+  } else if (data && typeof data === 'object') {
+    replyText = data.response || data.output || data.message || data.text || data.reply || (typeof data.data === 'string' ? data.data : '') || JSON.stringify(data);
   }
 
   if (!replyText || !replyText.trim()) {

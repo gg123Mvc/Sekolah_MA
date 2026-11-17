@@ -303,16 +303,39 @@ export const testWebhook = async (req, res) => {
     }
 
     const testPayload = {
+      // Untuk n8n Chat Trigger ("When chat message received")
+      action: 'sendMessage',
+      chatInput: 'Halo, ini uji koneksi dari Dashboard Admin SPMB',
+      sessionId: 'admin_test_session',
+
+      // Untuk Webhook biasa
       event: 'ping_test',
       message: 'Test ping koneksi dari Dashboard Admin SPMB',
+      query: 'Halo, ini uji koneksi dari Dashboard Admin SPMB',
+      input: 'Halo, ini uji koneksi dari Dashboard Admin SPMB',
       timestamp: new Date().toISOString(),
       is_test: true
     };
 
-    const response = await axios.post(targetUrl, testPayload, {
-      headers,
-      timeout: 10000 // 10 detik timeout
-    });
+    let response;
+    try {
+      response = await axios.post(targetUrl, testPayload, {
+        headers,
+        timeout: 10000 // 10 detik timeout
+      });
+    } catch (err) {
+      // Coba retry dengan /chat jika 404 (khas node "When chat message received")
+      if (err.response?.status === 404 && !targetUrl.endsWith('/chat')) {
+        const altUrl = `${targetUrl.replace(/\/+$/, '')}/chat`;
+        try {
+          response = await axios.post(altUrl, testPayload, { headers, timeout: 10000 });
+        } catch (retryErr) {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
 
     const responseTimeMs = Date.now() - startTime;
 

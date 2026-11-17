@@ -47,6 +47,12 @@ export async function validateWebhookUrl(urlString) {
   }
 
   const hostname = parsedUrl.hostname.toLowerCase();
+  const isDev = process.env.NODE_ENV === 'development' || process.env.ALLOW_LOCAL_WEBHOOK === 'true';
+
+  // Pada mode development, izinkan localhost / 127.0.0.1 untuk pengujian n8n lokal
+  if (isDev && (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1')) {
+    return parsedUrl;
+  }
 
   // Cek daftar hostname yang diblokir
   if (BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
