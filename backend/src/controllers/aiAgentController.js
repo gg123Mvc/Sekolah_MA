@@ -6,6 +6,26 @@ import ChatbotSettings from '../models/chatbotSettingsModel.js';
 import { decrypt } from '../utils/encryption.js';
 import { validateWebhookUrl } from '../utils/ssrfProtection.js';
 
+/**
+ * Ambil jumlah total siswa yang telah mendaftar dari database Supabase
+ */
+export const getRegisteredStudentCount = async () => {
+  try {
+    if (!supabase) return 0;
+    const { count, error } = await supabase
+      .from('users')
+      .select('id', { count: 'exact', head: true });
+    if (error) {
+      console.warn('Gagal menghitung jumlah siswa terdaftar:', error.message);
+      return 0;
+    }
+    return count || 0;
+  } catch (err) {
+    console.warn('Error getRegisteredStudentCount:', err.message);
+    return 0;
+  }
+};
+
 // Send Message to AI Agent
 export const sendMessageToAI = async (req, res) => {
   const startTime = Date.now();
@@ -42,6 +62,9 @@ export const sendMessageToAI = async (req, res) => {
     
     const askGrad = msgUpper.match(/(CEK KELULUSAN|HASIL SELEKSI|STATUS KELULUSAN|PENGUMUMAN|LULUS ATAU TIDAK)/);
     const askTicket = msgUpper.match(/(CEK TIKET|STATUS PENGADUAN|CEK PENGADUAN|LACAK PENGADUAN)/);
+    
+    // Deteksi pertanyaan jumlah siswa/murid/pendaftar yang mendaftar (Mode Direct)
+    const askStudentCount = msgUpper.match(/(BERAPA.*(SISWA|MURID|PENDAFTAR|ORANG).*DAFTAR|BERAPA.*JUMLAH.*(SISWA|MURID|PENDAFTAR)|JUMLAH.*(SISWA|MURID|PENDAFTAR)|TOTAL.*(SISWA|MURID|PENDAFTAR)|ADA BERAPA.*(DAFTAR|PENDAFTAR|SISWA|MURID)|BANYAKNYA.*(PENDAFTAR|SISWA)|YANG DAFTAR ADA BERAPA)/);
 
     if (ticketMatch) {
       aiResponse = JSON.stringify({ action: 'check_ticket', ticket_number: ticketMatch[1] });
@@ -55,6 +78,10 @@ export const sendMessageToAI = async (req, res) => {
     } else if (askGrad) {
       aiResponse = "Silakan masukkan Nomor Registrasi Anda.\n\nContoh:\nSPMB-2026-003";
       actualMode = 'system';
+    } else if (askStudentCount && activeMode === 'direct') {
+      const studentCount = await getRegisteredStudentCount();
+      aiResponse = `Terdapat ${studentCount} siswa yang telah mendaftar di MA Bina Cendekia.`;
+      actualMode = 'direct';
     } else {
       // Jalankan sesuai mode chatbot yang dikonfigurasi admin
       if (activeMode === 'n8n') {
@@ -387,9 +414,19 @@ const callAIProvider = async (message, history = [], settings = null) => {
   }
 
   const knowledgeBaseText = await getFormattedKnowledgeBase();
+  const studentCount = await getRegisteredStudentCount();
 
   const systemPrompt = `Nama Anda adalah MAIRA AI (Madrasah AI Response Assistant), asisten virtual resmi MA Bina Cendekia.
 Tugas utama Anda adalah memberikan layanan informasi dan menerima pengaduan terkait Sistem Penerimaan Murid Baru (SPMB).
+
+=========================================================
+DATA STATISTIK PENDAFTAR REAL-TIME
+=========================================================
+Jumlah total siswa yang telah mendaftar di MA Bina Cendekia saat ini: ${studentCount} siswa.
+ATURAN KHUSUS JUMLAH PENDAFTAR:
+Jika pengguna menanyakan jumlah siswa/murid/pendaftar yang mendaftar (misalnya: "ada berapa siswa yang mendaftar disini?", "berapa jumlah pendaftar?", "total pendaftar"), berikan jumlahnya saja secara langsung, singkat, dan jelas:
+"Terdapat ${studentCount} siswa yang telah mendaftar di MA Bina Cendekia."
+DILARANG menjawab tidak memiliki data dan DILARANG mengarahkan ke kontak panitia untuk pertanyaan jumlah pendaftar.
 
 =========================================================
 ATURAN UMUM
@@ -465,8 +502,9 @@ PRIORITAS ACTION & Knowledge Base
 1. No Tiket (CMP-xxxx) → check_ticket
 2. No Registrasi (SPMB-xxxx / REGxxxx) → check_graduation
 3. Jarak/Rute → Arahkan ke fitur Cek Jarak GPS (teks panduan, BUKAN JSON)
-4. Pengaduan → create_complaint
-5. Selain itu → Knowledge Base
+4. Jumlah Siswa/Pendaftar → Jawab: "Terdapat ${studentCount} siswa yang telah mendaftar di MA Bina Cendekia."
+5. Pengaduan → create_complaint
+6. Selain itu → Knowledge Base
 =========================================================`;
 
   // 1. PROVIDER GOOGLE GEMINI
