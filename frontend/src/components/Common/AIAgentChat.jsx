@@ -120,10 +120,15 @@ const AIAgentChat = () => {
         const provider = response.data.data.provider;
         const model = response.data.data.model;
         const sourceLabel = response.data.data.source_label;
+        const serverChatbotMode = response.data.data.chatbot_mode;
         
-        setCurrentMode(mode);
+        // Mode chatbot di header HANYA boleh bernilai 'n8n' atau 'direct' sesuai pengaturan server,
+        // TIDAK BOLEH berubah ke direct saat pesan dikirim jika mode n8n aktif.
+        if (serverChatbotMode) {
+          setCurrentMode(serverChatbotMode);
+        }
         updateMessageResponse(tempId, aiResponse, timestamp, responseTimeMs, {
-          mode,
+          mode: (serverChatbotMode === 'n8n' || currentMode === 'n8n') ? 'n8n' : mode,
           provider,
           model,
           source_label: sourceLabel

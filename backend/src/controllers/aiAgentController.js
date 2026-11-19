@@ -27,10 +27,13 @@ export const sendMessageToAI = async (req, res) => {
     currentSettings = await ChatbotSettings.getActive();
     activeProvider = currentSettings?.provider || 'groq';
     activeModel = currentSettings?.model || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
-    activeMode = currentSettings?.chatbot_mode || 'direct';
+    
+    // Pastikan konsistensi penentuan mode n8n vs direct
+    const isN8N = (currentSettings?.chatbot_mode === 'n8n' || Boolean(currentSettings?.webhook_enabled));
+    activeMode = isN8N ? 'n8n' : 'direct';
 
     let aiResponse = "";
-    let actualMode = 'direct';
+    let actualMode = isN8N ? 'n8n' : 'direct';
     
     // Interceptor: Deteksi otomatis nomor registrasi atau tiket untuk mempercepat respon 
     const msgUpper = message.trim().toUpperCase();
@@ -54,7 +57,7 @@ export const sendMessageToAI = async (req, res) => {
       actualMode = 'system';
     } else {
       // Jalankan sesuai mode chatbot yang dikonfigurasi admin
-      if (activeMode === 'n8n' || currentSettings?.webhook_enabled) {
+      if (activeMode === 'n8n') {
         if (currentSettings?.webhook_url) {
           try {
             const webhookResult = await callN8NWebhook(message, history, currentSettings, user);
@@ -62,17 +65,16 @@ export const sendMessageToAI = async (req, res) => {
             webhookStatus = `HTTP ${webhookResult.httpStatus || 200}`;
             actualMode = 'n8n';
           } catch (webhookErr) {
-            console.error('❌ Webhook n8n gagal dipanggil, beralih ke Direct AI fallback:', webhookErr.message);
+            console.error('❌ Webhook n8n gagal dipanggil:', webhookErr.message);
             webhookStatus = `Error: ${webhookErr.message.slice(0, 100)}`;
-            // Fallback ke AI Provider langsung agar chatbot tidak berhenti bekerja
-            aiResponse = await callAIProvider(message, history, currentSettings);
-            actualMode = 'direct_fallback';
+            // PENTING: Jangan beralih ke Direct AI agar tidak terjadi perubahan mode yang membingungkan pengguna
+            aiResponse = `⚠️ Terjadi kendala saat menghubungi workflow n8n: ${webhookErr.message}.\n\nPastikan workflow di n8n sudah berstatus Active (Hijau) dan server n8n dapat diakses.`;
+            actualMode = 'n8n';
           }
         } else {
-          // Jika URL Webhook n8n belum disetel di dashboard, gunakan direct AI sebagai fallback
-          console.warn('⚠️ Mode n8n aktif tetapi URL webhook n8n belum disetel. Menggunakan Direct AI.');
-          aiResponse = await callAIProvider(message, history, currentSettings);
-          actualMode = 'direct_fallback';
+          console.warn('⚠️ Mode n8n aktif tetapi URL webhook n8n belum disetel.');
+          aiResponse = `⚠️ Mode n8n sedang aktif, tetapi URL Webhook n8n belum diisi di Pengaturan AI Dashboard Admin.`;
+          actualMode = 'n8n';
         }
       } else {
         aiResponse = await callAIProvider(message, history, currentSettings);
@@ -220,10 +222,8 @@ export const sendMessageToAI = async (req, res) => {
     }
 
     let sourceLabel = '';
-    if (actualMode === 'n8n') {
-      sourceLabel = 'Workflow n8n';
-    } else if (actualMode === 'direct_fallback') {
-      sourceLabel = `Direct AI (${activeProvider.toUpperCase()}) - Fallback`;
+    if (activeMode === 'n8n') {
+      sourceLabel = actualMode === 'system' ? 'Sistem SPMB (n8n Mode)' : 'Workflow n8n';
     } else if (actualMode === 'system') {
       sourceLabel = 'Sistem SPMB';
     } else {
@@ -235,9 +235,10 @@ export const sendMessageToAI = async (req, res) => {
       ai_response: aiResponse,
       timestamp: new Date(),
       response_time_ms: responseTimeMs,
-      provider: activeProvider,
-      model: activeModel,
-      mode: actualMode,
+      provider: activeMode === 'n8n' ? 'n8n' : activeProvider,
+      model: activeMode === 'n8n' ? 'n8n-workflow' : activeModel,
+      mode: activeMode === 'n8n' ? 'n8n' : actualMode,
+      chatbot_mode: activeMode === 'n8n' ? 'n8n' : 'direct',
       source_label: sourceLabel
     }, 'Pesan berhasil diproses');
 
