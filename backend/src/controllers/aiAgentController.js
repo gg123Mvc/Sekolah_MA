@@ -191,24 +191,30 @@ export const sendMessageToAI = async (req, res) => {
               const { data, error } = await supabase
                 .from('users')
                 .select(`
-                  id,
-                  registration_number,
-                  full_name,
-                  registration_status,
+                  *,
                   personal_data ( nisn ),
                   school_data ( school_name, major_choice )
                 `)
                 .eq('registration_number', actionData.registration_number)
                 .maybeSingle();
 
-              if (error) throw error;
-              rows = data;
+              if (error) {
+                // Fallback jika PostgREST gagal join
+                const { data: simpleData } = await supabase
+                  .from('users')
+                  .select('*')
+                  .eq('registration_number', actionData.registration_number)
+                  .maybeSingle();
+                rows = simpleData;
+              } else {
+                rows = data;
+              }
             }
             
             if (rows) {
-              // Ekstrak NISN
-              let nisn = '-';
-              if (rows.personal_data) {
+              // Ekstrak NISN (cek di tabel users langsung atau dari personal_data)
+              let nisn = rows.nisn || '-';
+              if (nisn === '-' && rows.personal_data) {
                 if (Array.isArray(rows.personal_data) && rows.personal_data.length > 0) {
                   nisn = rows.personal_data[0].nisn || '-';
                 } else if (typeof rows.personal_data === 'object') {
@@ -216,16 +222,16 @@ export const sendMessageToAI = async (req, res) => {
                 }
               }
 
-              // Ekstrak Sekolah Asal & Pilihan Program
-              let schoolName = '-';
-              let majorChoice = '-';
+              // Ekstrak Sekolah Asal & Pilihan Program (cek di tabel users langsung atau dari school_data)
+              let schoolName = rows.school_name || rows.origin_school || '-';
+              let majorChoice = rows.major_choice || rows.major || rows.program || '-';
               if (rows.school_data) {
                 if (Array.isArray(rows.school_data) && rows.school_data.length > 0) {
-                  schoolName = rows.school_data[0].school_name || '-';
-                  majorChoice = rows.school_data[0].major_choice || '-';
+                  if (schoolName === '-') schoolName = rows.school_data[0].school_name || '-';
+                  if (majorChoice === '-') majorChoice = rows.school_data[0].major_choice || '-';
                 } else if (typeof rows.school_data === 'object') {
-                  schoolName = rows.school_data.school_name || '-';
-                  majorChoice = rows.school_data.major_choice || '-';
+                  if (schoolName === '-') schoolName = rows.school_data.school_name || '-';
+                  if (majorChoice === '-') majorChoice = rows.school_data.major_choice || '-';
                 }
               }
 
@@ -236,8 +242,8 @@ export const sendMessageToAI = async (req, res) => {
               }
               if ((schoolName === '-' || majorChoice === '-') && rows.id && supabase) {
                 const { data: sData } = await supabase.from('school_data').select('school_name, major_choice').eq('user_id', rows.id).maybeSingle();
-                if (sData?.school_name) schoolName = sData.school_name;
-                if (sData?.major_choice) majorChoice = sData.major_choice;
+                if (sData?.school_name && schoolName === '-') schoolName = sData.school_name;
+                if (sData?.major_choice && majorChoice === '-') majorChoice = sData.major_choice;
               }
 
               let statusText = '⏳ Dalam Proses';
@@ -250,10 +256,8 @@ export const sendMessageToAI = async (req, res) => {
               } else {
                 statusText = '⏳ Dalam Proses';
               }
-
-              const totalApplicants = await getRegisteredStudentCount();
               
-              aiResponse = `🎓 HASIL SELEKSI PMB\n\nNomor Registrasi: ${rows.registration_number}  \nNISN: ${nisn}  \nNama: ${rows.full_name}  \nSekolah Asal: ${schoolName}  \nProgram: ${majorChoice}  \nStatus: ${statusText}  \n📌 Jumlah pendaftar: ${totalApplicants}`;
+              aiResponse = `🎓 HASIL SELEKSI PMB\n\nNomor Registrasi: ${rows.registration_number}  \nNISN: ${nisn}  \nNama: ${rows.full_name}  \nSekolah Asal: ${schoolName}  \nProgram: ${majorChoice}  \nStatus: ${statusText}`;
             } else {
               aiResponse = `Mohon maaf.\n\nNomor Registrasi tidak ditemukan.\n\nSilakan periksa kembali Nomor Registrasi Anda.`;
             }
@@ -478,8 +482,7 @@ PRIORITAS PERINTAH (TIDAK BOLEH PAKAI KNOWLEDGE BASE)
 =========================================================
 1. Cek Kelulusan
 2. Cek Status Pengaduan
-3. Jarak/Rute
-4. Buat Pengaduan
+3. Buat Pengaduan
 
 =========================================================
 =========================================================
@@ -522,26 +525,13 @@ Jika ada kata "cek tiket", "status pengaduan" ATAU menyebut Nomor Tiket, AI WAJI
 Jika minta cek tanpa nomor tiket, minta nomornya.
 
 =========================================================
-PENGECEKAN JARAK DAN RUTE KE SEKOLAH
-=========================================================
-Jika pengguna bertanya tentang jarak, rute, atau lokasi ke sekolah (misal: "berapa jarak ke sekolah?", "cek jarak saya ke sekolah", "rute dari tempat saya ke sekolah"), AI WAJIB merespons dengan teks panduan berikut:
-
-"📍 Untuk mengecek jarak dari lokasi Anda ke sekolah, silakan gunakan fitur **Cek Jarak** yang tersedia di halaman ini. Fitur tersebut menggunakan GPS perangkat Anda untuk menentukan lokasi secara akurat, lalu menghitung jarak dan estimasi waktu perjalanan ke MA Bina Cendekia secara otomatis. Cukup klik tombol **Cek Jarak** dan berikan izin akses lokasi ketika diminta."
-
-AI DILARANG KERAS:
-- Meminta pengguna memasukkan nama desa, kecamatan, atau lokasi secara manual.
-- Mengaku sudah mengetahui lokasi pengguna sebelum GPS berhasil memperoleh koordinat.
-- Memberikan hasil jarak atau estimasi waktu tanpa data koordinat GPS nyata.
-- Menawarkan lokasi patokan manual sebagai alternatif.
-=========================================================
 PRIORITAS ACTION & Knowledge Base
 =========================================================
 1. No Tiket (CMP-xxxx) → check_ticket
 2. No Registrasi (SPMB-xxxx / REGxxxx) → check_graduation
-3. Jarak/Rute → Arahkan ke fitur Cek Jarak GPS (teks panduan, BUKAN JSON)
-4. Jumlah Siswa/Pendaftar → Jawab: "Terdapat ${studentCount} siswa yang telah mendaftar di MA Bina Cendekia."
-5. Pengaduan → create_complaint
-6. Selain itu → Knowledge Base
+3. Jumlah Siswa/Pendaftar → Jawab: "Terdapat ${studentCount} siswa yang telah mendaftar di MA Bina Cendekia."
+4. Pengaduan → create_complaint
+5. Selain itu → Knowledge Base
 =========================================================`;
 
   // 1. PROVIDER GOOGLE GEMINI
