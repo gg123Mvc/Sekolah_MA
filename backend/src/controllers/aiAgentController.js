@@ -190,7 +190,14 @@ export const sendMessageToAI = async (req, res) => {
             if (supabase) {
               const { data, error } = await supabase
                 .from('users')
-                .select('registration_number, full_name, registration_status, school_data ( major_choice )')
+                .select(`
+                  id,
+                  registration_number,
+                  full_name,
+                  registration_status,
+                  personal_data ( nisn ),
+                  school_data ( school_name, major_choice )
+                `)
                 .eq('registration_number', actionData.registration_number)
                 .maybeSingle();
 
@@ -199,24 +206,54 @@ export const sendMessageToAI = async (req, res) => {
             }
             
             if (rows) {
-              let statusText = '';
-              let messageText = '';
-              
-              if (rows.registration_status === 'accepted') {
-                statusText = '✅ LULUS';
-                messageText = 'Selamat. Silakan melakukan daftar ulang sesuai jadwal yang telah ditentukan.';
-              } else if (rows.registration_status === 'rejected') {
-                statusText = '❌ TIDAK LULUS';
-                messageText = 'Terima kasih telah mengikuti proses seleksi. Semoga sukses pada kesempatan berikutnya.';
-              } else if (rows.registration_status === 'revision') {
-                statusText = '⚠️ PERLU REVISI';
-                messageText = 'Dokumen Anda perlu diperbaiki. Silakan login ke dashboard untuk melihat detail revisi.';
-              } else {
-                statusText = '⏳ DALAM PROSES / BELUM DIVERIFIKASI';
-                messageText = 'Pendaftaran Anda sedang dalam antrean pengecekan oleh panitia. Mohon cek kembali secara berkala.';
+              // Ekstrak NISN
+              let nisn = '-';
+              if (rows.personal_data) {
+                if (Array.isArray(rows.personal_data) && rows.personal_data.length > 0) {
+                  nisn = rows.personal_data[0].nisn || '-';
+                } else if (typeof rows.personal_data === 'object') {
+                  nisn = rows.personal_data.nisn || '-';
+                }
               }
+
+              // Ekstrak Sekolah Asal & Pilihan Program
+              let schoolName = '-';
+              let majorChoice = '-';
+              if (rows.school_data) {
+                if (Array.isArray(rows.school_data) && rows.school_data.length > 0) {
+                  schoolName = rows.school_data[0].school_name || '-';
+                  majorChoice = rows.school_data[0].major_choice || '-';
+                } else if (typeof rows.school_data === 'object') {
+                  schoolName = rows.school_data.school_name || '-';
+                  majorChoice = rows.school_data.major_choice || '-';
+                }
+              }
+
+              // Fallback query jika relasi join terpisah
+              if (nisn === '-' && rows.id && supabase) {
+                const { data: pData } = await supabase.from('personal_data').select('nisn').eq('user_id', rows.id).maybeSingle();
+                if (pData?.nisn) nisn = pData.nisn;
+              }
+              if ((schoolName === '-' || majorChoice === '-') && rows.id && supabase) {
+                const { data: sData } = await supabase.from('school_data').select('school_name, major_choice').eq('user_id', rows.id).maybeSingle();
+                if (sData?.school_name) schoolName = sData.school_name;
+                if (sData?.major_choice) majorChoice = sData.major_choice;
+              }
+
+              let statusText = '⏳ Dalam Proses';
+              if (rows.registration_status === 'accepted') {
+                statusText = '✅ Lulus';
+              } else if (rows.registration_status === 'rejected') {
+                statusText = '❌ Tidak Lulus';
+              } else if (rows.registration_status === 'revision') {
+                statusText = '⚠️ Perlu Revisi';
+              } else {
+                statusText = '⏳ Dalam Proses';
+              }
+
+              const totalApplicants = await getRegisteredStudentCount();
               
-              aiResponse = `🎓 HASIL SELEKSI PMB\n\nNomor Registrasi\n${rows.registration_number}\n\nNama\n${rows.full_name}\n\nProgram\n${rows.school_data?.major_choice || '-'}\n\nStatus\n${statusText}\n\n${messageText}`;
+              aiResponse = `🎓 HASIL SELEKSI PMB\n\nNomor Registrasi: ${rows.registration_number}  \nNISN: ${nisn}  \nNama: ${rows.full_name}  \nSekolah Asal: ${schoolName}  \nProgram: ${majorChoice}  \nStatus: ${statusText}  \n📌 Jumlah pendaftar: ${totalApplicants}`;
             } else {
               aiResponse = `Mohon maaf.\n\nNomor Registrasi tidak ditemukan.\n\nSilakan periksa kembali Nomor Registrasi Anda.`;
             }
@@ -227,7 +264,7 @@ export const sendMessageToAI = async (req, res) => {
         } else if (actionData.action === 'check_route') {
           aiResponse = "📍 **Cek Jarak ke Sekolah**\n\nUntuk menghitung jarak dari lokasi Anda ke sekolah, silakan gunakan fitur **Cek Jarak** yang tersedia di halaman ini.\n\nFitur tersebut akan meminta izin akses lokasi GPS perangkat Anda untuk menentukan titik awal secara akurat.\n\nJarak dan estimasi waktu perjalanan akan dihitung secara otomatis setelah izin diberikan.";
         }
-        actualMode = 'system';
+        actualMode = activeMode === 'n8n' ? 'n8n' : 'direct';
       } catch(e) {
         // Not a valid JSON or not our action format, just continue with original response
       }
